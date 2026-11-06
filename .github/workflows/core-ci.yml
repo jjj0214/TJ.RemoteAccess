@@ -1,0 +1,30 @@
+name: TJ.RemoteAccess Core CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  portable-core:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -S . -B out/build -A x64
+      - name: Configure (Linux)
+        if: runner.os == 'Linux'
+        run: cmake -S . -B out/build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build out/build --config Release --parallel 2
+      - name: C++ tests
+        run: ctest --test-dir out/build -C Release --output-on-failure
+      - name: Offline upstream importer tests
+        run: python -m unittest discover -s tests -p 'test_*.py' -v

@@ -1,0 +1,15 @@
+.vs/
+.idea/
+out/
+build/
+__pycache__/
+*.pyc
+*.pfx
+*.p12
+*.pem
+*.key
+*.snk
+*.user
+*.suo
+*.zip
+reports/
