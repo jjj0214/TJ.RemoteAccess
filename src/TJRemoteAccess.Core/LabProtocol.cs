@@ -8,7 +8,8 @@ namespace TJ.RemoteAccess.Lab;
 internal enum LabMessage : byte
 {
     Hello = 1, Welcome = 2, JpegFrame = 3, Key = 4,
-    Pointer = 5, Status = 6, KeepAlive = 7
+    Pointer = 5, Status = 6, KeepAlive = 7,
+    PasswordLogin = 8
 }
 internal enum LabRole : byte { ViewOnly = 0, Controller = 1 }
 internal readonly record struct LabPacket(LabMessage Type, byte[] Payload);
@@ -20,6 +21,7 @@ internal static class LabWire
     internal const int MaxFrameBytes = 6 * 1024 * 1024;
     internal const int MaxControlPacketBytes = 32;
     internal const byte Version = 1;
+    internal const int MaxPasswordPacketBytes = 258;
 
     internal static async Task WriteAsync(Stream stream, SemaphoreSlim writeMutex,
                                            LabMessage type, ReadOnlyMemory<byte> body,
@@ -59,6 +61,43 @@ internal static class LabWire
         await stream.ReadExactlyAsync(payload, stop).ConfigureAwait(false);
         return new LabPacket((LabMessage)tag[0], payload);
     }
+
+    internal static byte[] PasswordLogin(string password)
+    {
+        if (!ValidPassword(password))
+            throw new InvalidDataException("Invalid password length or characters.");
+        byte[] secret = System.Text.Encoding.UTF8.GetBytes(password);
+        try
+        {
+            var body = new byte[secret.Length + 1];
+            body[0] = Version;
+            secret.CopyTo(body.AsSpan(1));
+            return body;
+        }
+        finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(secret); }
+    }
+
+    internal static string ParsePasswordLogin(ReadOnlySpan<byte> payload)
+    {
+        if (payload.Length is < 13 or > 257 || payload[0] != Version)
+            throw new InvalidDataException("Malformed password login packet.");
+        try
+        {
+            var password = new System.Text.UTF8Encoding(false, true).GetString(payload[1..]);
+            if (!ValidPassword(password))
+                throw new InvalidDataException("Password policy rejected packet.");
+            return password;
+        }
+        catch (System.Text.DecoderFallbackException ex)
+        {
+            throw new InvalidDataException("Password payload is not valid UTF-8.", ex);
+        }
+    }
+
+    internal static bool ValidPassword(string? password) =>
+        password is { Length: >= 12 and <= 128 } &&
+        !password.Any(char.IsControl) &&
+        System.Text.Encoding.UTF8.GetByteCount(password) <= 256;
 
     internal static byte[] Welcome(LabWelcome value)
     {

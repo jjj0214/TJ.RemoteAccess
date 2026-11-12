@@ -48,7 +48,7 @@ class LabMultiServerDeliveryTests(unittest.TestCase):
             self.assertIn(token, source)
         dialogs = (CORE / "LabViewerProfileDialogs.cs").read_text(encoding="utf-8")
         self.assertIn("UseSystemPasswordChar", dialogs)
-        self.assertIn("Trust pins cannot be edited here", dialogs)
+        self.assertIn("The pinned server identity cannot be edited here", dialogs)
 
     def test_installer_stages_and_rolls_back_without_touching_tightvnc(self):
         script = (TOOLS / "Install-TJRemoteAccess-Lab.ps1").read_text(

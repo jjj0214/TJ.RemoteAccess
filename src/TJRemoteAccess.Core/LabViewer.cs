@@ -34,6 +34,7 @@ internal sealed class LabViewerForm : Form
         Width = 275, DropDownStyle = ComboBoxStyle.DropDownList
     };
     private readonly Button _addProfile = new() { Text = "Add server", AutoSize = true };
+    private readonly Button _addPassword = new() { Text = "Add password server", AutoSize = true };
     private readonly Button _editProfile = new() { Text = "Edit", AutoSize = true };
     private readonly Button _removeProfile = new() { Text = "Remove", AutoSize = true };
     private readonly Button _detailsProfile = new() { Text = "Identity", AutoSize = true };
@@ -86,6 +87,7 @@ internal sealed class LabViewerForm : Form
             Padding = new Padding(0, 6, 0, 0) });
         toolbar.Controls.Add(_profilePicker);
         toolbar.Controls.Add(_addProfile);
+        toolbar.Controls.Add(_addPassword);
         toolbar.Controls.Add(_editProfile);
         toolbar.Controls.Add(_removeProfile);
         toolbar.Controls.Add(_detailsProfile);
@@ -104,6 +106,7 @@ internal sealed class LabViewerForm : Form
         _connect.Click += async (_, _) => await ConnectAsync();
         _profilePicker.SelectedIndexChanged += (_, _) => ApplySelectedProfile();
         _addProfile.Click += (_, _) => AddServerProfile();
+        _addPassword.Click += (_, _) => AddPasswordServerProfile();
         _editProfile.Click += (_, _) => EditServerProfile();
         _removeProfile.Click += (_, _) => RemoveServerProfile();
         _detailsProfile.Click += (_, _) => {
@@ -207,6 +210,7 @@ private LabViewerProfile? SelectedProfile =>
         bool busy = _connecting || _connected || _tcp is not null;
         _profilePicker.Enabled = !busy;
         _addProfile.Enabled = !busy;
+        _addPassword.Enabled = !busy;
         _editProfile.Enabled = !busy && SelectedProfile is not null;
         _removeProfile.Enabled = !busy && SelectedProfile is not null;
         _detailsProfile.Enabled = !busy && SelectedProfile is not null;
@@ -221,6 +225,14 @@ private LabViewerProfile? SelectedProfile =>
     {
         if (_connected || _tcp is not null) return;
         var profile = LabViewerProfileDialogs.Import(this, _profileStore);
+        if (profile is not null)
+            ReloadProfiles(profile.Id);
+    }
+
+    private void AddPasswordServerProfile()
+    {
+        if (_connecting || _connected || _tcp is not null) return;
+        var profile = LabViewerPasswordDialogs.Add(this, _profileStore);
         if (profile is not null)
             ReloadProfiles(profile.Id);
     }
@@ -273,9 +285,14 @@ private LabViewerProfile? SelectedProfile =>
                 ? _profileStore.Edit(selected.Id, selected.Name, host, port)
                 : selected;
             _status.Text = $"Authenticating TLS: {profile.Name}...";
-            using var clientCert = LabCertificates.LoadPrivateCertificate(
-                profile.ClientCertificateThumbprint);
-            if (!LabCertificates.ValidatePinned(clientCert, LabCertificates.Hash(clientCert),
+            bool passwordMode = profile.AuthMode == "Password";
+            string? loginPassword = passwordMode ?
+                LabViewerPasswordDialogs.PromptPassword(this) : null;
+            if (passwordMode && loginPassword is null) return;
+            using var clientCert = passwordMode ? null :
+                LabCertificates.LoadPrivateCertificate(profile.ClientCertificateThumbprint);
+            if (clientCert is not null &&
+                !LabCertificates.ValidatePinned(clientCert, LabCertificates.Hash(clientCert),
                                                 LabCertificates.ClientEku))
                 throw new AuthenticationException("Viewer certificate has invalid EKU/expiry.");
 
@@ -289,7 +306,7 @@ private LabViewerProfile? SelectedProfile =>
             var options = new SslClientAuthenticationOptions
             {
                 TargetHost = "localhost", // exact DER pin, not DNS-based PKI trust
-                ClientCertificates = new X509CertificateCollection { clientCert },
+                ClientCertificates = clientCert is null ? null : new X509CertificateCollection { clientCert },
                 EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
                 CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
                 RemoteCertificateValidationCallback = (_, cert, _, _) =>
@@ -298,6 +315,16 @@ private LabViewerProfile? SelectedProfile =>
             };
             await _tls.AuthenticateAsClientAsync(options, token)
                       .WaitAsync(TimeSpan.FromSeconds(12), token);
+            if (passwordMode)
+            {
+                byte[] secret = LabWire.PasswordLogin(loginPassword!);
+                loginPassword = null;
+                try {
+                    await LabWire.WriteAsync(_tls, _outgoingMutex,
+                                             LabMessage.PasswordLogin, secret, token);
+                }
+                finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(secret); }
+            }
             await LabWire.WriteAsync(_tls, _outgoingMutex,
                                      LabMessage.Hello, new[] { LabWire.Version }, token);
             var welcome = await LabWire.ReadAsync(_tls, token)

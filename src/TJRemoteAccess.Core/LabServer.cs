@@ -28,7 +28,7 @@ internal static class LabServerProgram
             if (!IPAddress.IsLoopback(ip) && !explicitlyAllowLan)
                 throw new InvalidOperationException(
                     "LAN exposure requires an explicit --allow-lan argument. " +
-                    "TLS and client certificate pinning remain mandatory.");
+                    "TLS and verified Server identity remain mandatory.");
             if (settings.Port is < 1024 or > 65535)
                 throw new InvalidDataException("Port must be 1024..65535.");
             using var cert = LabCertificates.LoadPrivateCertificate(
@@ -52,6 +52,8 @@ internal sealed class LabServerForm : Form
     private readonly IPAddress _address;
     private readonly X509Certificate2 _serverCert;
     private readonly LabServerClientRoster _clientRoster;
+    private readonly LabPasswordAccess _passwordAccess = new();
+    private readonly LabPasswordAttemptLimiter _passwordLimiter = new();
     private readonly RichTextBox _events = new() { ReadOnly = true, Dock = DockStyle.Fill };
     private readonly Label _summary = new() {
         AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(12)
@@ -59,6 +61,7 @@ internal sealed class LabServerForm : Form
     private readonly Button _start = new() { Text = "Start (interactive session)" };
     private readonly Button _stopButton = new() { Text = "Stop", Enabled = false };
     private readonly Button _clientsButton = new() { Text = "Client access", AutoSize = true };
+    private readonly Button _passwordButton = new() { Text = "Password access", AutoSize = true };
     private readonly object _guard = new();
     private readonly HashSet<Guid> _sessions = new();
     private Guid? _controller;
@@ -67,6 +70,7 @@ internal sealed class LabServerForm : Form
     private byte _pressedMouse;
     private readonly SemaphoreSlim _handshakeLimit = new(4);
     private TcpListener? _listener;
+    private TcpListener? _passwordListener;
     private CancellationTokenSource? _shutdown;
     private readonly Rectangle _desktop;
 
@@ -89,19 +93,21 @@ internal sealed class LabServerForm : Form
         controls.Controls.Add(_start);
         controls.Controls.Add(_stopButton);
         controls.Controls.Add(_clientsButton);
+        controls.Controls.Add(_passwordButton);
         Controls.Add(_events);
         Controls.Add(_summary);
         Controls.Add(controls);
         _start.Click += (_, _) => StartServer();
         _stopButton.Click += (_, _) => StopServer();
         _clientsButton.Click += (_, _) => {
-            using var dialog = new LabServerClientAccessForm(_clientRoster);
+            using var dialog = new LabServerClientAccessForm(_clientRoster, _settings, _serverCert);
             dialog.ShowDialog(this);
         };
+        _passwordButton.Click += (_, _) => LabPasswordAccessDialog.Show(this, _passwordAccess, _settings, _serverCert);
         FormClosing += (_, _) => StopServer();
         UpdateSummary();
         Log("Interactive screen share only. Lock screen/UAC are NOT supported.");
-        Log("Only a locally installed, explicitly allowlisted client certificate may connect.");
+        Log("Mutual TLS certificate access remains available; optional password TLS is disabled by default.");
     }
 
     private void UpdateSummary()
@@ -138,6 +144,15 @@ internal sealed class LabServerForm : Form
             _shutdown = new CancellationTokenSource();
             _listener = new TcpListener(_address, _settings.Port);
             _listener.Start(backlog: 6);
+            var passwordEnabled = _passwordAccess.Current().Enabled;
+            if (passwordEnabled)
+            {
+                if (_settings.Port >= 65535)
+                    throw new InvalidOperationException("No port available for password TLS listener.");
+                _passwordListener = new TcpListener(_address, _settings.Port + 1);
+                _passwordListener.Start(backlog: 4);
+                Log($"Password TLS enabled on {_address}:{_settings.Port + 1} (server pin required).");
+            }
             lock (_guard)
             {
                 _running = true;
@@ -150,7 +165,10 @@ internal sealed class LabServerForm : Form
             var token = run.Token;
             var frames = new LabSharedFrameStore();
             _ = Task.Run(() => CaptureFramesShared(frames, run), token);
-            _ = Task.Run(() => AcceptLoop(frames, token), token);
+            var certListener = _listener;
+            _ = Task.Run(() => AcceptLoop(certListener, frames, false, token), token);
+            if (_passwordListener is { } passListener)
+                _ = Task.Run(() => AcceptLoop(passListener, frames, true, token), token);
         }
         catch (Exception ex)
         {
@@ -163,6 +181,8 @@ internal sealed class LabServerForm : Form
     {
         _shutdown?.Cancel();
         _listener?.Stop();
+        _passwordListener?.Stop();
+        _passwordListener = null;
         _listener = null;
         _start.Enabled = true;
         _stopButton.Enabled = false;
@@ -176,18 +196,17 @@ internal sealed class LabServerForm : Form
         Log("Server stopped (existing TLS connections closing).");
     }
 
-    private async Task AcceptLoop(LabSharedFrameStore frames, CancellationToken token)
+    private async Task AcceptLoop(TcpListener listener, LabSharedFrameStore frames,
+                                  bool passwordMode, CancellationToken token)
     {
         while (!token.IsCancellationRequested)
         {
             TcpClient? tcp = null;
             try
             {
-                var listener = _listener;
-                if (listener is null) break;
                 tcp = await listener.AcceptTcpClientAsync(token);
                 tcp.NoDelay = true;
-                _ = HandleClientAsync(tcp, frames, token);
+                _ = HandleClientAsync(tcp, frames, passwordMode, token);
             }
             catch (OperationCanceledException) { break; }
             catch (ObjectDisposedException) { break; }
@@ -200,7 +219,7 @@ internal sealed class LabServerForm : Form
     }
 
     private async Task HandleClientAsync(TcpClient tcp, LabSharedFrameStore frames,
-                                         CancellationToken shutdown)
+                                         bool passwordMode, CancellationToken shutdown)
     {
         Guid session = Guid.NewGuid();
         bool registered = false;
@@ -220,21 +239,56 @@ internal sealed class LabServerForm : Form
                 var tlsOptions = new SslServerAuthenticationOptions
                 {
                     ServerCertificate = _serverCert,
-                    ClientCertificateRequired = true,
+                    ClientCertificateRequired = !passwordMode,
                     EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
                     CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
                     RemoteCertificateValidationCallback = (_, cert, _, _) =>
-                        _clientRoster.IsCertificateAllowed(cert)
+                        passwordMode || _clientRoster.IsCertificateAllowed(cert)
                 };
                 await tls.AuthenticateAsServerAsync(tlsOptions, token)
                          .WaitAsync(TimeSpan.FromSeconds(12), token);
-                // Bind each TLS connection to its individual client identity.
-                var remoteCert = tls.RemoteCertificate ??
+                // Authentication modes are deliberately isolated by listener.
+                // Certificate listener keeps its existing mutual-TLS policy.
+                X509Certificate? remoteCert = passwordMode ? null : tls.RemoteCertificate ??
                     throw new AuthenticationException("Missing Viewer certificate.");
-                string clientPin = LabCertificates.Hash(remoteCert);
-                var admission = _clientRoster.GetAuthorized(clientPin) ??
-                    throw new AuthenticationException("Viewer identity not authorized.");
-                // Keep the pinned identity for every subsequent policy check.
+                string clientPin = passwordMode ? "" : LabCertificates.Hash(remoteCert!);
+                string passwordVerifier = "";
+                bool mayControl;
+                if (passwordMode)
+                {
+                    string peerIp = (tcp.Client.RemoteEndPoint as IPEndPoint)?.Address.ToString() ?? "unknown";
+                    if (!_passwordLimiter.MayAttempt(peerIp) || !_passwordAccess.Current().Enabled)
+                        throw new AuthenticationException("Password access temporarily unavailable.");
+                    var login = await LabWire.ReadAsync(tls, token, LabWire.MaxPasswordPacketBytes)
+                                             .WaitAsync(TimeSpan.FromSeconds(10), token);
+                    string entered;
+                    try
+                    {
+                        if (login.Type != LabMessage.PasswordLogin)
+                            throw new InvalidDataException("Password login required.");
+                        entered = LabWire.ParsePasswordLogin(login.Payload);
+                    }
+                    catch (InvalidDataException)
+                    {
+                        _passwordLimiter.Failed(peerIp);
+                        throw new AuthenticationException("Password login rejected.");
+                    }
+                    if (!_passwordAccess.TryAuthenticate(entered, out var access))
+                    {
+                        _passwordLimiter.Failed(peerIp);
+                        throw new AuthenticationException("Password login rejected.");
+                    }
+                    _passwordLimiter.Succeeded(peerIp);
+                    if (!access.Enabled) throw new AuthenticationException("Password access disabled.");
+                    passwordVerifier = access.VerifierBase64;
+                    mayControl = access.CanControl;
+                }
+                else
+                {
+                    var admission = _clientRoster.GetAuthorized(clientPin) ??
+                        throw new AuthenticationException("Viewer identity not authorized.");
+                    mayControl = admission.CanControl;
+                }
 
                 // A TLS-authenticated channel still needs an application-level
                 // protocol/version check before reserving one of three slots.
@@ -244,8 +298,18 @@ internal sealed class LabServerForm : Form
                     hello.Payload.Length != 1 || hello.Payload[0] != LabWire.Version)
                     throw new InvalidDataException("Unsupported viewer protocol.");
 
-                admission = _clientRoster.GetAuthorized(clientPin) ??
-                    throw new AuthenticationException("Client was revoked during admission.");
+                if (passwordMode)
+                {
+                    if (!_passwordAccess.IsSessionAuthorized(passwordVerifier, false))
+                        throw new AuthenticationException("Password access was revoked.");
+                    mayControl = _passwordAccess.Current().CanControl;
+                }
+                else
+                {
+                    var admission = _clientRoster.GetAuthorized(clientPin) ??
+                        throw new AuthenticationException("Client was revoked during admission.");
+                    mayControl = admission.CanControl;
+                }
                 lock (_guard)
                 {
                     if (!_running || token.IsCancellationRequested)
@@ -254,7 +318,7 @@ internal sealed class LabServerForm : Form
                         throw new InvalidOperationException("Maximum three viewers reached.");
                     _sessions.Add(session);
                     registered = true;
-                    if (_controller is null && admission.CanControl) {
+                    if (_controller is null && mayControl) {
                         _controller = session;
                         role = LabRole.Controller;
                     }
@@ -263,13 +327,14 @@ internal sealed class LabServerForm : Form
                 // semaphore to limit pending/unauthenticated sessions.
                 _handshakeLimit.Release();
                 handshakePermit = false;
-                Log($"Mutual TLS client connected ({role}).");
+                Log($"{(passwordMode ? "Password TLS" : "Mutual TLS")} client connected ({role}).");
                 using var writeMutex = new SemaphoreSlim(1, 1);
                 await LabWire.WriteAsync(tls, writeMutex, LabMessage.Welcome,
                     LabWire.Welcome(new LabWelcome(role, _desktop.Width, _desktop.Height,
                                                    _desktop.Left, _desktop.Top)), token);
 
-                var capture = SendFrames(tls, writeMutex, frames, remoteCert, clientPin, role, token);
+                var capture = SendFrames(tls, writeMutex, frames, remoteCert, clientPin,
+                                         passwordMode, passwordVerifier, role, token);
                 // If capture fails (locked desktop, lost display, encoder),
                 // terminate the TLS session instead of leaving a frozen viewer.
                 _ = capture.ContinueWith(task => {
@@ -287,9 +352,17 @@ internal sealed class LabServerForm : Form
                         var packet = await LabWire.ReadAsync(
                             tls, token, LabWire.MaxControlPacketBytes)
                             .WaitAsync(TimeSpan.FromSeconds(25), token);
-                        var rights = _clientRoster.GetAuthorized(clientPin);
-                        if (rights is null || (role == LabRole.Controller && !rights.CanControl))
-                            throw new AuthenticationException("Viewer access revoked or downgraded.");
+                        if (passwordMode)
+                        {
+                            if (!_passwordAccess.IsSessionAuthorized(passwordVerifier, role == LabRole.Controller))
+                                throw new AuthenticationException("Password access revoked or downgraded.");
+                        }
+                        else
+                        {
+                            var rights = _clientRoster.GetAuthorized(clientPin);
+                            if (rights is null || (role == LabRole.Controller && !rights.CanControl))
+                                throw new AuthenticationException("Viewer access revoked or downgraded.");
+                        }
                         // The keepalive is still authenticated and can never
                         // turn a view-only session into a controller.
                         if (packet.Type == LabMessage.KeepAlive && packet.Payload.Length == 0)
@@ -392,16 +465,25 @@ internal sealed class LabServerForm : Form
     }
     private async Task SendFrames(SslStream tls, SemaphoreSlim writeMutex,
                                    LabSharedFrameStore frames,
-                                   X509Certificate clientCertificate, string clientPin,
+                                   X509Certificate? clientCertificate, string clientPin,
+                                   bool passwordMode, string passwordVerifier,
                                    LabRole role, CancellationToken token)
     {
         long lastSequence = 0;
         while (!token.IsCancellationRequested)
         {
-            var rights = _clientRoster.GetAuthorized(clientPin);
-            if (!_clientRoster.IsCertificateAllowed(clientCertificate) ||
-                rights is null || (role == LabRole.Controller && !rights.CanControl))
-                throw new AuthenticationException("Viewer authorization disabled or downgraded.");
+            if (passwordMode)
+            {
+                if (!_passwordAccess.IsSessionAuthorized(passwordVerifier, role == LabRole.Controller))
+                    throw new AuthenticationException("Password session disabled or reconfigured.");
+            }
+            else
+            {
+                var rights = _clientRoster.GetAuthorized(clientPin);
+                if (!_clientRoster.IsCertificateAllowed(clientCertificate) ||
+                    rights is null || (role == LabRole.Controller && !rights.CanControl))
+                    throw new AuthenticationException("Viewer authorization disabled or downgraded.");
+            }
             // A slow Viewer sends only the newest shared frame; no queue.
             var frame = frames.Latest;
             if (frame is not null && frame.Sequence != lastSequence)

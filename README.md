@@ -43,6 +43,10 @@ for concrete implementation blockers. The static audit never approves deployment
   read-only CPU/memory sampling: docs/M2_LAB_SHARED_CAPTURE_PERFORMANCE_20261112_KO.md.
 - Secure Windows Service / user-session agent separation (design only):
   docs/M3_SERVICE_AGENT_ARCHITECTURE_20261112_KO.md.
+- Optional **password authentication over server-pinned TLS** on separate
+  port 15445 (default disabled; existing client-certificate port 15444 remains
+  unchanged). Server GUI generates Viewer-2/Viewer-3 PFX bundles directly:
+  docs/M2_LAB_PASSWORD_AND_GUI_PAIRING_20261112_KO.md.
 
 ## Prerequisites
 

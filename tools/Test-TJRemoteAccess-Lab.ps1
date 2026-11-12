@@ -125,6 +125,31 @@ if (Test-Path -LiteralPath $clientRosterFile -PathType Leaf) {
 } elseif (Test-Path -LiteralPath (Join-Path $configDir 'server-clients.migrated')) {
     $clientRosterStatus = 'MISSING AFTER MIGRATION (SERVER DENIES ALL)'
 }
+$passwordConfigFile = Join-Path $configDir 'server-password.json'
+$passwordStatus = 'Disabled (not configured)'
+$passwordCanControl = $false
+if (Test-Path -LiteralPath $passwordConfigFile -PathType Leaf) {
+    try {
+        $passwordPolicy = Get-Content -LiteralPath $passwordConfigFile -Raw | ConvertFrom-Json
+        if ($passwordPolicy.SchemaVersion -ne 1 -or
+            $passwordPolicy.Iterations -ne 600000 -or
+            ($passwordPolicy.Enabled -and
+                ([string]::IsNullOrWhiteSpace($passwordPolicy.SaltBase64) -or
+                 [string]::IsNullOrWhiteSpace($passwordPolicy.VerifierBase64)))) {
+            throw 'Invalid password policy'
+        }
+        $passwordStatus = if ($passwordPolicy.Enabled) { 'Enabled (TLS required)' } else { 'Disabled' }
+        $passwordCanControl = [bool]$passwordPolicy.CanControl
+    } catch {
+        $passwordStatus = 'INVALID (Server will deny password login)'
+    }
+}
+$passwordListeners = @()
+try {
+    $passwordListeners = @(Get-NetTCPConnection -LocalPort 15445 -State Listen -ErrorAction Stop |
+        Select-Object LocalAddress, LocalPort, OwningProcess)
+} catch { }
+
 $listeners = @()
 try {
     $listeners = @(Get-NetTCPConnection -LocalPort 15444 -State Listen -ErrorAction Stop |
@@ -148,6 +173,9 @@ try {
     ServerDisabledClientCount = $disabledClients
     ServerViewOnlyClientCount = $viewOnlyClients
     Tcp15444Listeners = $listeners
+    PasswordTLSStatus = $passwordStatus
+    PasswordCanControl = $passwordCanControl
+    Tcp15445Listeners = $passwordListeners
     ServiceInstallPerformed = $false
     FirewallChanged = $false
     Note = 'Metadata only. GUI and input require isolated Windows acceptance.'

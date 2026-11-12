@@ -16,10 +16,12 @@ internal sealed class LabViewerProfile
     public string Host { get; set; } = "";
     public int Port { get; set; } = 15444;
     public string ClientCertificateThumbprint { get; set; } = "";
+    public string AuthMode { get; set; } = "Certificate";
     public string ServerSha256 { get; set; } = "";
 
     public LabViewerProfile Copy() => (LabViewerProfile)MemberwiseClone();
-    public override string ToString() => $"{Name}  ({Host}:{Port})";
+    public override string ToString() => $"{Name}  ({Host}:{Port})" +
+        (AuthMode == "Password" ? " [Password TLS]" : "");
 }
 
 internal sealed class LabViewerProfileCatalog
@@ -85,6 +87,35 @@ internal sealed class LabViewerProfileStore
             catalog.SelectedProfileId = profile.Id;
             Save(catalog);
             return profile.Copy();
+        });
+    }
+
+    internal LabViewerProfile RegisterPasswordProfile(string name, string host,
+                                                        int port, string serverSha256)
+    {
+        var candidate = new LabViewerProfile {
+            Id = Guid.NewGuid().ToString("N"),
+            Name = name.Trim(), Host = host.Trim(), Port = port,
+            AuthMode = "Password", ClientCertificateThumbprint = "",
+            ServerSha256 = serverSha256.Trim().ToUpperInvariant()
+        };
+        ValidateProfile(candidate);
+        return WithExclusiveLock(() => {
+            var catalog = ReadOrMigrate();
+            var existing = catalog.Profiles.FirstOrDefault(p =>
+                p.AuthMode == "Password" &&
+                string.Equals(p.ServerSha256, candidate.ServerSha256,
+                    StringComparison.OrdinalIgnoreCase));
+            if (existing is not null)
+            {
+                catalog.SelectedProfileId = existing.Id;
+                Save(catalog);
+                return existing.Copy();
+            }
+            catalog.Profiles.Add(candidate);
+            catalog.SelectedProfileId = candidate.Id;
+            Save(catalog);
+            return candidate.Copy();
         });
     }
 
@@ -283,7 +314,10 @@ internal sealed class LabViewerProfileStore
             profile.Name.Any(char.IsControl) ||
             !ValidHost(profile.Host) ||
             profile.Port is < 1024 or > 65535 ||
-            !Hex(profile.ClientCertificateThumbprint, 40) ||
+            profile.AuthMode is not ("Certificate" or "Password") ||
+            (profile.AuthMode == "Certificate" &&
+             !Hex(profile.ClientCertificateThumbprint, 40)) ||
+            (profile.AuthMode == "Password" && profile.ClientCertificateThumbprint != "") ||
             !Hex(profile.ServerSha256, 64))
             throw new InvalidDataException("Invalid profile name, endpoint or TLS identity.");
     }

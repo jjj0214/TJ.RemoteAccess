@@ -92,12 +92,14 @@ internal static class LabViewerProfileDialogs
 
     internal static void ShowIdentity(IWin32Window owner, LabViewerProfile profile)
     {
+        string identity = profile.AuthMode == "Password" ?
+            "Password TLS (no client certificate; password is never saved)" :
+            $"Client certificate thumbprint: {profile.ClientCertificateThumbprint}";
         MessageBox.Show(owner,
             $"Profile: {profile.Name}\nHost: {profile.Host}:{profile.Port}\n\n" +
             $"Server certificate (SHA-256):\n{profile.ServerSha256}\n\n" +
-            $"Local client certificate thumbprint:\n{profile.ClientCertificateThumbprint}\n\n" +
-            "Trust pins cannot be edited here. Import a pairing bundle " +
-            "to add another trusted server.",
+            $"{identity}\n\n" +
+            "The pinned server identity cannot be edited here.",
             "Pinned server identity", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 

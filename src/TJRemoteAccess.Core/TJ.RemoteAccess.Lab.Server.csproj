@@ -16,6 +16,10 @@
     <Compile Include="LabServer.cs" />
     <Compile Include="LabServerClients.cs" />
     <Compile Include="LabServerClientAccessForm.cs" />
+    <Compile Include="LabClientPairing.cs" />
+    <Compile Include="LabClientPairingDialog.cs" />
+    <Compile Include="LabPasswordAccess.cs" />
+    <Compile Include="LabPasswordAccessDialog.cs" />
     <Compile Include="LabSharedFrames.cs" />
   </ItemGroup>
 </Project>

@@ -11,6 +11,7 @@
 | M2.lab | Interactive .NET 9 Lab, multi-server pinning, original TightVNC coexistence | **User 8/8 two-PC acceptance PASS at f06bd42; new changes require field verification** |
 | M2.lab.clients | Independent Viewer client certificates, local allowlist, disable, ViewOnly/Controller | **Implemented; Windows TLS roster handshake and revocation loopback tested; 60/60 xUnit PASS overall** |
 | M2.lab.capture | One shared JPEG producer for three TLS viewers + read-only performance sampler | **Built + in-memory concurrency tested; CPU/fps and GUI LAN runtime pending** |
+| M2.lab.access | Interactive Viewer-2/Viewer-3 PFX generator and optional password over pinned TLS port +1 | **Implemented; 74/74 xUnit Windows Schannel tests and 70/70 Python tests PASS; new GUI/two-PC validation pending** |
 | M3.design | Windows Service / interactive SessionAgent privilege and IPC boundary | **Design documented; service, Agent and secure desktop NOT IMPLEMENTED** |
 | M2.b | Original + fork parallel installation and independent operation | **NOT TESTED** |
 | M2.c | Logon / lock / UAC / reboot | **NOT TESTED** |

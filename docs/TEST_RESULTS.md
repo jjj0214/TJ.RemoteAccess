@@ -124,3 +124,20 @@ protocol security or authorize service installation.
 - See docs/M2_LAB_MULTI_CLIENT_ACCESS_20261112_KO.md,
   docs/M2_LAB_SHARED_CAPTURE_PERFORMANCE_20261112_KO.md, and
   docs/M3_SERVICE_AGENT_ARCHITECTURE_20261112_KO.md.
+
+## Password-over-TLS and GUI Viewer pairing (2026-11-12)
+
+- Existing pinned mTLS certificate listener TCP 15444 retained.
+- Optional separate TCP 15445: TLS required, Server SHA-256 pin mandatory,
+  password rather than Viewer certificate; disabled / ViewOnly by default.
+- Server stores only PBKDF2-SHA256 salted verifier (600k iterations).
+- Viewer never persists password; per-IP and global retry limits added.
+- Server Client access GUI generates individual Viewer-2/Viewer-3 PFX bundles.
+- Viewer GUI creates pinned password profile, prompts every connection.
+- Windows Schannel loopback correct/wrong-password TLS tests PASS.
+- Lab .NET 9 Release build: PASS; compiler errors/warnings 0.
+- xUnit protocol, TLS, password policy/rotation and roster: **74/74 PASS**.
+- Python source/regression: **70/70 PASS**.
+- Real GUI pairing, two-PC LAN password sessions and installer execution
+  require user acceptance; NOT automatically verified.
+- Guide: docs/M2_LAB_PASSWORD_AND_GUI_PAIRING_20261112_KO.md.

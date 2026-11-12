@@ -9,6 +9,8 @@ namespace TJ.RemoteAccess.Lab;
 internal sealed class LabServerClientAccessForm : Form
 {
     private readonly LabServerClientRoster _roster;
+    private readonly LabServerSettings _settings;
+    private readonly System.Security.Cryptography.X509Certificates.X509Certificate2 _serverCertificate;
     private readonly ListView _entries = new() {
         Dock = DockStyle.Fill, FullRowSelect = true, HideSelection = false,
         MultiSelect = false, View = View.Details
@@ -21,9 +23,12 @@ internal sealed class LabServerClientAccessForm : Form
             "Disabling a client also disconnects its existing sessions."
     };
 
-    internal LabServerClientAccessForm(LabServerClientRoster roster)
+    internal LabServerClientAccessForm(LabServerClientRoster roster, LabServerSettings settings,
+        System.Security.Cryptography.X509Certificates.X509Certificate2 serverCertificate)
     {
         _roster = roster;
+        _settings = settings;
+        _serverCertificate = serverCertificate;
         Text = "TJ.RemoteAccess Lab — Client access (current user)";
         MinimumSize = new Size(700, 400);
         Size = new Size(860, 520);
@@ -38,6 +43,7 @@ internal sealed class LabServerClientAccessForm : Form
             Dock = DockStyle.Bottom, Height = 48, Padding = new Padding(5)
         };
         AddButton(bar, "Refresh", Reload);
+        AddButton(bar, "Generate Viewer(s)", GenerateViewers);
         AddButton(bar, "Disable", () => Change(enabled: false));
         AddButton(bar, "Enable", () => Change(enabled: true));
         AddButton(bar, "Allow control", () => ChangeControl(true));
@@ -46,6 +52,12 @@ internal sealed class LabServerClientAccessForm : Form
         Controls.Add(_help);
         Controls.Add(bar);
         Reload();
+    }
+
+    private void GenerateViewers()
+    {
+        if (LabClientPairingDialog.Create(this, _roster, _settings, _serverCertificate))
+            Reload();
     }
 
     private static void AddButton(FlowLayoutPanel bar, string text, Action callback)
