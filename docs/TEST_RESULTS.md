@@ -100,3 +100,27 @@ protocol security or authorize service installation.
   two-PC session. See docs/M2_LAB_POST_ACCEPTANCE_HARDENING_20261112_KO.md.
 - The GPL-derived native fork remains blocked for deployment; no claim of
   unattended Windows Service/UAC/production readiness.
+
+## Per-Viewer access and shared capture continuation (2026-11-12)
+
+- Separate per-Viewer PFX issuance; Server roster contains public SHA-256 pins only.
+- Legacy AllowedClientSha256 migrated to revocable entry; missing/corrupt
+  authorization roster fails closed after one-time migration.
+- Server UI: Enable/Disable, Allow control/View only, Refresh.
+- Setup CLI: pair-client, list-clients, disable-client, enable-client, client-control.
+- Active input and frames check authorization periodically (<=500ms policy cache).
+- Real Windows Schannel TLS loopback: unknown/revoked clients rejected;
+  other allowlisted clients retain authorized connections.
+- One shared JPEG capture producer for up to three separately encrypted Viewers.
+- Read-only roster status and CPU/memory measurement scripts added.
+- Lab .NET 9 Release build: PASS, 0 compiler errors and warnings.
+- xUnit TLS/roster/protocol/shared-frame concurrency: **60/60 PASS**.
+- Python source/integration regression suite: **64/64 PASS**.
+- User's original 8/8 acceptance is on the earlier f06bd42 build.
+- New GUI access changes, real LAN revocation, performance and PowerShell
+  scripts still require user-run practical acceptance.
+- Windows service/UAC/lock-screen support is **NOT IMPLEMENTED**; M3
+  service and SessionAgent trust/IPC design is documented separately.
+- See docs/M2_LAB_MULTI_CLIENT_ACCESS_20261112_KO.md,
+  docs/M2_LAB_SHARED_CAPTURE_PERFORMANCE_20261112_KO.md, and
+  docs/M3_SERVICE_AGENT_ARCHITECTURE_20261112_KO.md.

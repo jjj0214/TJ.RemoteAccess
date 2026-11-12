@@ -37,6 +37,12 @@ for concrete implementation blockers. The static audit never approves deployment
 - **Latest two-PC acceptance guide:** docs/M2_LAB_FINAL_ACCEPTANCE_20261112_KO.md.
 - **8/8 user acceptance and transport resilience updates:** see
   docs/M2_LAB_POST_ACCEPTANCE_HARDENING_20261112_KO.md.
+- Per-Viewer TLS certificates, independent allow/disable and view/control rights:
+  docs/M2_LAB_MULTI_CLIENT_ACCESS_20261112_KO.md.
+- One shared JPEG capture producer for up to three TLS viewers, with optional
+  read-only CPU/memory sampling: docs/M2_LAB_SHARED_CAPTURE_PERFORMANCE_20261112_KO.md.
+- Secure Windows Service / user-session agent separation (design only):
+  docs/M3_SERVICE_AGENT_ARCHITECTURE_20261112_KO.md.
 
 ## Prerequisites
 

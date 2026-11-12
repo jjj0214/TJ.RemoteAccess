@@ -19,10 +19,29 @@ internal static class LabSetup
                                     args.Length >= 4 ? args[3] : null);
             if (args.Length == 1 && args[0].Equals("list-profiles", StringComparison.OrdinalIgnoreCase))
                 return ListProfiles();
+            if (args.Length is 2 or 3 && args[0] == "pair-client")
+            {
+                if (args.Length == 3 && args[2] != "--view-only")
+                    throw new ArgumentException("Expected optional --view-only.");
+                return LabSetupClientCommands.PairClient(args[1], canControl: args.Length == 2);
+            }
+            if (args.Length == 1 && args[0] == "list-clients")
+                return LabSetupClientCommands.ListClients();
+            if (args.Length == 2 && args[0] == "disable-client")
+                return LabSetupClientCommands.SetClientEnabled(args[1], false);
+            if (args.Length == 2 && args[0] == "enable-client")
+                return LabSetupClientCommands.SetClientEnabled(args[1], true);
+            if (args.Length == 3 && args[0] == "client-control")
+                return LabSetupClientCommands.SetClientControl(args[1], args[2] == "allow" ? true :
+                    args[2] == "view-only" ? false : throw new ArgumentException("Expected allow or view-only."));
             Console.WriteLine("TJ.RemoteAccess Lab Setup (current-user only)\n" +
                 "  TJ.RemoteAccess.Lab.Setup.exe init\n" +
                 "  TJ.RemoteAccess.Lab.Setup.exe import-client <client-transfer.pfx> [name] [host]\n" +
-                "  TJ.RemoteAccess.Lab.Setup.exe list-profiles\n\n" +
+                "  TJ.RemoteAccess.Lab.Setup.exe list-profiles\n" +
+                "  TJ.RemoteAccess.Lab.Setup.exe pair-client <name> [--view-only]  (SERVER)\n" +
+                "  TJ.RemoteAccess.Lab.Setup.exe list-clients  (SERVER)\n" +
+                "  TJ.RemoteAccess.Lab.Setup.exe disable-client|enable-client <full-id>\n" +
+                "  TJ.RemoteAccess.Lab.Setup.exe client-control <full-id> allow|view-only\n\n" +
                 "Use init on the remote SERVER PC, then transfer the pairing folder " +
                 "securely to the VIEWER PC. No Windows service or firewall rule is created.");
             return 2;

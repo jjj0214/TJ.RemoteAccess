@@ -13,5 +13,8 @@
     <Compile Include="LabCertificates.cs" />
     <Compile Include="LabViewerProfiles.cs" />
     <Compile Include="LabSetup.cs" />
+    <Compile Include="LabServerClients.cs" />
+    <Compile Include="LabClientPairing.cs" />
+    <Compile Include="LabSetupClientCommands.cs" />
   </ItemGroup>
 </Project>

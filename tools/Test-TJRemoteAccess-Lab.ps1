@@ -100,6 +100,31 @@ $attentionCount = @($viewerCertificateStates | Where-Object {
 if ($serverCertificateState -and $serverCertificateState.State -ne 'Valid') {
     $attentionCount++
 }
+$clientRosterFile = Join-Path $configDir 'server-clients.json'
+$clientRosterStatus = if (Test-Path -LiteralPath $serverFile -PathType Leaf) {
+    'Legacy single-pin configuration (not migrated yet)'
+} else { 'No Server configuration' }
+$allowedClients = 0
+$disabledClients = 0
+$viewOnlyClients = 0
+if (Test-Path -LiteralPath $clientRosterFile -PathType Leaf) {
+    try {
+        $roster = Get-Content -LiteralPath $clientRosterFile -Raw | ConvertFrom-Json
+        if ($roster.SchemaVersion -ne 1 -or $null -eq $roster.Clients) {
+            throw 'Unsupported client roster schema'
+        }
+        $allowedClients = @($roster.Clients | Where-Object { $_.Enabled }).Count
+        $disabledClients = @($roster.Clients | Where-Object { -not $_.Enabled }).Count
+        $viewOnlyClients = @($roster.Clients | Where-Object {
+            $_.Enabled -and -not $_.CanControl
+        }).Count
+        $clientRosterStatus = 'Loaded'
+    } catch {
+        $clientRosterStatus = 'INVALID: ' + $_.Exception.Message
+    }
+} elseif (Test-Path -LiteralPath (Join-Path $configDir 'server-clients.migrated')) {
+    $clientRosterStatus = 'MISSING AFTER MIGRATION (SERVER DENIES ALL)'
+}
 $listeners = @()
 try {
     $listeners = @(Get-NetTCPConnection -LocalPort 15444 -State Listen -ErrorAction Stop |
@@ -118,6 +143,10 @@ try {
     ServerCertificateStatus = $serverCertificateState
     ViewerCertificateStatuses = $viewerCertificateStates
     CertificateAttentionCount = $attentionCount
+    ServerClientRosterStatus = $clientRosterStatus
+    ServerAllowedClientCount = $allowedClients
+    ServerDisabledClientCount = $disabledClients
+    ServerViewOnlyClientCount = $viewOnlyClients
     Tcp15444Listeners = $listeners
     ServiceInstallPerformed = $false
     FirewallChanged = $false

@@ -51,12 +51,14 @@ internal sealed class LabServerForm : Form
     private readonly LabServerSettings _settings;
     private readonly IPAddress _address;
     private readonly X509Certificate2 _serverCert;
+    private readonly LabServerClientRoster _clientRoster;
     private readonly RichTextBox _events = new() { ReadOnly = true, Dock = DockStyle.Fill };
     private readonly Label _summary = new() {
         AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(12)
     };
     private readonly Button _start = new() { Text = "Start (interactive session)" };
     private readonly Button _stopButton = new() { Text = "Stop", Enabled = false };
+    private readonly Button _clientsButton = new() { Text = "Client access", AutoSize = true };
     private readonly object _guard = new();
     private readonly HashSet<Guid> _sessions = new();
     private Guid? _controller;
@@ -74,6 +76,8 @@ internal sealed class LabServerForm : Form
         _settings = settings;
         _address = address;
         _serverCert = serverCert;
+        _clientRoster = new LabServerClientRoster(legacyPin: settings.AllowedClientSha256);
+        _clientRoster.Load();
         _desktop = SystemInformation.VirtualScreen;
         Text = "TJ.RemoteAccess Lab Server - TEST ONLY";
         MinimumSize = new Size(660, 330);
@@ -84,11 +88,16 @@ internal sealed class LabServerForm : Form
         _stopButton.AutoSize = true;
         controls.Controls.Add(_start);
         controls.Controls.Add(_stopButton);
+        controls.Controls.Add(_clientsButton);
         Controls.Add(_events);
         Controls.Add(_summary);
         Controls.Add(controls);
         _start.Click += (_, _) => StartServer();
         _stopButton.Click += (_, _) => StopServer();
+        _clientsButton.Click += (_, _) => {
+            using var dialog = new LabServerClientAccessForm(_clientRoster);
+            dialog.ShowDialog(this);
+        };
         FormClosing += (_, _) => StopServer();
         UpdateSummary();
         Log("Interactive screen share only. Lock screen/UAC are NOT supported.");
@@ -137,8 +146,11 @@ internal sealed class LabServerForm : Form
             _stopButton.Enabled = true;
             Log("Listening with mandatory TLS 1.2/1.3 + client certificate pinning.");
             // TLS, screen capture and input handling must not run on UI thread.
-            var token = _shutdown.Token;
-            _ = Task.Run(() => AcceptLoop(token), token);
+            var run = _shutdown;
+            var token = run.Token;
+            var frames = new LabSharedFrameStore();
+            _ = Task.Run(() => CaptureFramesShared(frames, run), token);
+            _ = Task.Run(() => AcceptLoop(frames, token), token);
         }
         catch (Exception ex)
         {
@@ -164,7 +176,7 @@ internal sealed class LabServerForm : Form
         Log("Server stopped (existing TLS connections closing).");
     }
 
-    private async Task AcceptLoop(CancellationToken token)
+    private async Task AcceptLoop(LabSharedFrameStore frames, CancellationToken token)
     {
         while (!token.IsCancellationRequested)
         {
@@ -175,7 +187,7 @@ internal sealed class LabServerForm : Form
                 if (listener is null) break;
                 tcp = await listener.AcceptTcpClientAsync(token);
                 tcp.NoDelay = true;
-                _ = HandleClientAsync(tcp, token);
+                _ = HandleClientAsync(tcp, frames, token);
             }
             catch (OperationCanceledException) { break; }
             catch (ObjectDisposedException) { break; }
@@ -187,7 +199,8 @@ internal sealed class LabServerForm : Form
         }
     }
 
-    private async Task HandleClientAsync(TcpClient tcp, CancellationToken shutdown)
+    private async Task HandleClientAsync(TcpClient tcp, LabSharedFrameStore frames,
+                                         CancellationToken shutdown)
     {
         Guid session = Guid.NewGuid();
         bool registered = false;
@@ -211,11 +224,17 @@ internal sealed class LabServerForm : Form
                     EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
                     CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
                     RemoteCertificateValidationCallback = (_, cert, _, _) =>
-                        LabCertificates.ValidatePinned(cert, _settings.AllowedClientSha256,
-                                                       LabCertificates.ClientEku)
+                        _clientRoster.IsCertificateAllowed(cert)
                 };
                 await tls.AuthenticateAsServerAsync(tlsOptions, token)
                          .WaitAsync(TimeSpan.FromSeconds(12), token);
+                // Bind each TLS connection to its individual client identity.
+                var remoteCert = tls.RemoteCertificate ??
+                    throw new AuthenticationException("Missing Viewer certificate.");
+                string clientPin = LabCertificates.Hash(remoteCert);
+                var admission = _clientRoster.GetAuthorized(clientPin) ??
+                    throw new AuthenticationException("Viewer identity not authorized.");
+                // Keep the pinned identity for every subsequent policy check.
 
                 // A TLS-authenticated channel still needs an application-level
                 // protocol/version check before reserving one of three slots.
@@ -225,6 +244,8 @@ internal sealed class LabServerForm : Form
                     hello.Payload.Length != 1 || hello.Payload[0] != LabWire.Version)
                     throw new InvalidDataException("Unsupported viewer protocol.");
 
+                admission = _clientRoster.GetAuthorized(clientPin) ??
+                    throw new AuthenticationException("Client was revoked during admission.");
                 lock (_guard)
                 {
                     if (!_running || token.IsCancellationRequested)
@@ -233,7 +254,7 @@ internal sealed class LabServerForm : Form
                         throw new InvalidOperationException("Maximum three viewers reached.");
                     _sessions.Add(session);
                     registered = true;
-                    if (_controller is null) {
+                    if (_controller is null && admission.CanControl) {
                         _controller = session;
                         role = LabRole.Controller;
                     }
@@ -248,12 +269,12 @@ internal sealed class LabServerForm : Form
                     LabWire.Welcome(new LabWelcome(role, _desktop.Width, _desktop.Height,
                                                    _desktop.Left, _desktop.Top)), token);
 
-                var capture = SendFrames(tls, writeMutex, token);
+                var capture = SendFrames(tls, writeMutex, frames, remoteCert, clientPin, role, token);
                 // If capture fails (locked desktop, lost display, encoder),
                 // terminate the TLS session instead of leaving a frozen viewer.
                 _ = capture.ContinueWith(task => {
                     if (!shutdown.IsCancellationRequested)
-                        Log("Desktop capture failed: " +
+                        Log("Desktop capture or client authorization ended: " +
                             task.Exception?.GetBaseException().Message);
                     try { lifetime.Cancel(); } catch (ObjectDisposedException) { }
                     tcp.Dispose(); // Unblock the read loop.
@@ -266,6 +287,11 @@ internal sealed class LabServerForm : Form
                         var packet = await LabWire.ReadAsync(
                             tls, token, LabWire.MaxControlPacketBytes)
                             .WaitAsync(TimeSpan.FromSeconds(25), token);
+                        var rights = _clientRoster.GetAuthorized(clientPin);
+                        if (rights is null || (role == LabRole.Controller && !rights.CanControl))
+                            throw new AuthenticationException("Viewer access revoked or downgraded.");
+                        // The keepalive is still authenticated and can never
+                        // turn a view-only session into a controller.
                         if (packet.Type == LabMessage.KeepAlive && packet.Payload.Length == 0)
                             continue;
                         if (packet.Type is not (LabMessage.Key or LabMessage.Pointer))
@@ -324,17 +350,68 @@ internal sealed class LabServerForm : Form
         }
     }
 
-    private async Task SendFrames(SslStream tls, SemaphoreSlim writeMutex,
-                                   CancellationToken token)
+    // Exactly one producer captures/encodes each desktop frame, regardless of
+    // the number of authorized viewers. A slow Viewer skips obsolete frames.
+    private async Task CaptureFramesShared(LabSharedFrameStore frames, CancellationTokenSource run)
     {
+        var token = run.Token;
+        try
+        {
+            while (!token.IsCancellationRequested)
+            {
+                bool hasViewer;
+                lock (_guard) { hasViewer = _running && _sessions.Count != 0; }
+                if (hasViewer)
+                {
+                    var jpeg = CaptureJpeg(_desktop);
+                    if (!token.IsCancellationRequested)
+                        frames.Publish(jpeg);
+                }
+                // Do not capture a private desktop when no one is connected.
+                await Task.Delay(hasViewer ? 160 : 350, token);
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            if (!token.IsCancellationRequested && !IsDisposed)
+            {
+                Log("Shared desktop capture failed; Server stopped: " + ex.Message);
+                try
+                {
+                    BeginInvoke(new Action(() => {
+                        // A delayed fault from a previous run must not stop
+                        // a newly started Server generation.
+                        if (!IsDisposed && ReferenceEquals(_shutdown, run))
+                            StopServer();
+                    }));
+                }
+                catch (InvalidOperationException) { }
+            }
+        }
+    }
+    private async Task SendFrames(SslStream tls, SemaphoreSlim writeMutex,
+                                   LabSharedFrameStore frames,
+                                   X509Certificate clientCertificate, string clientPin,
+                                   LabRole role, CancellationToken token)
+    {
+        long lastSequence = 0;
         while (!token.IsCancellationRequested)
         {
-            var frame = CaptureJpeg(_desktop);
-            if (frame.Length < LabWire.MaxFrameBytes)
+            var rights = _clientRoster.GetAuthorized(clientPin);
+            if (!_clientRoster.IsCertificateAllowed(clientCertificate) ||
+                rights is null || (role == LabRole.Controller && !rights.CanControl))
+                throw new AuthenticationException("Viewer authorization disabled or downgraded.");
+            // A slow Viewer sends only the newest shared frame; no queue.
+            var frame = frames.Latest;
+            if (frame is not null && frame.Sequence != lastSequence)
+            {
                 await LabWire.WriteAsync(tls, writeMutex,
-                                         LabMessage.JpegFrame, frame, token)
+                                         LabMessage.JpegFrame, frame.Jpeg, token)
                     .WaitAsync(TimeSpan.FromSeconds(10), token);
-            await Task.Delay(160, token); // bounded ~6 fps for lab use
+                lastSequence = frame.Sequence;
+            }
+            await Task.Delay(50, token);
         }
     }
 

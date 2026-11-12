@@ -1,5 +1,8 @@
 # TJ.RemoteAccess Lab — 실기 검증 결과와 안정화 패치 (2026-11-12)
 
+**후속 변경:** 아래 단일 Viewer 인증서 제한은 이 당시의 상태입니다.
+개별 인증서·폐기·공유 캡처 개선은 docs/M2_LAB_MULTI_CLIENT_ACCESS_20261112_KO.md 및 docs/M2_LAB_SHARED_CAPTURE_PERFORMANCE_20261112_KO.md에 별도 기록했습니다.
+
 ## 1. 사용자 제공 실기 테스트: 8/8 PASS
 
 2026-11-12 기존 feature/chatgpt-m2-engine-foundation 커밋 f06bd426 빌드로 다음 사항을 사용자 PC에서 확인했다.

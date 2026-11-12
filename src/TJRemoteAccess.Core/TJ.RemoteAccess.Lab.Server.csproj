@@ -14,5 +14,8 @@
     <Compile Include="LabProtocol.cs" />
     <Compile Include="LabCertificates.cs" />
     <Compile Include="LabServer.cs" />
+    <Compile Include="LabServerClients.cs" />
+    <Compile Include="LabServerClientAccessForm.cs" />
+    <Compile Include="LabSharedFrames.cs" />
   </ItemGroup>
 </Project>

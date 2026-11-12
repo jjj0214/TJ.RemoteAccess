@@ -20,6 +20,12 @@
     <Compile Include="lab_tls_tests.cs" />
     <Compile Include="lab_profiles_tests.cs" />
     <Compile Include="lab_transport_limits_tests.cs" />
+    <Compile Include="lab_client_roster_tests.cs" />
+    <Compile Include="lab_client_tls_authorization_tests.cs" />
+    <Compile Include="lab_shared_frames_tests.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\LabSharedFrames.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\LabServerClients.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\LabClientPairing.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\LabProtocol.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\LabCertificates.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\LabViewerProfiles.cs" />
