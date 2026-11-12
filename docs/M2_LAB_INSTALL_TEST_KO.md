@@ -1,5 +1,9 @@
 # TJ.RemoteAccess M2 Lab - Windows 빌드/설치/원격제어 시험 안내
 
+**최신 안내(2026-11-12):** 다중 서버 프로필, 기존 viewer.json 자동 보존,
+새 서버 등록 및 업데이트 후 최종 테스트는
+docs/M2_LAB_FINAL_ACCEPTANCE_20261112_KO.md를 먼저 참고하세요.
+
 **상태:** 독립 .NET 9 LAB 원격제어 구현 (운영 배포 제품 아님).
 **환경:** Windows 10/11 x64, VS2022/.NET 9 SDK, 로그인된 사용자 데스크톱.
 **중요:** TightVNC GPL 파생 엔진 guarded-v4의 fail-closed 차단은 그대로 유지. Lab Server/Viewer는 별도의 시험용 .NET 엔진이다. Windows Service, UAC, 잠금/로그온 화면, 자동 실행, 파일 전송, 클립보드, 270 PPM 성능 요구는 포함하지 않는다.

@@ -1,6 +1,7 @@
 ﻿#Requires -Version 5.1
 <#
-  READ-ONLY preflight; does not start apps, open sockets or modify configuration.
+  READ ONLY: reports local installation, saved server profile count and listener.
+  Does not read private keys, launch apps, create sockets or mutate configuration.
 #>
 [CmdletBinding()]
 param()
@@ -19,21 +20,42 @@ foreach ($component in $components) {
     }
 }
 $configDir = Join-Path $env:LOCALAPPDATA 'TJ.RemoteAccess.Lab'
-$server = Join-Path $configDir 'server.json'
-$viewer = Join-Path $configDir 'viewer.json'
-$tcp = @()
+$serverFile = Join-Path $configDir 'server.json'
+$legacyFile = Join-Path $configDir 'viewer.json'
+$profileFile = Join-Path $configDir 'viewer-profiles.json'
+$profileCount = 0
+$selected = ''
+$profileStatus = 'No saved profile catalog'
+if (Test-Path -LiteralPath $profileFile -PathType Leaf) {
+    try {
+        $catalog = Get-Content -LiteralPath $profileFile -Raw | ConvertFrom-Json
+        $profileCount = @($catalog.Profiles).Count
+        $matching = @($catalog.Profiles | Where-Object { $_.Id -eq $catalog.SelectedProfileId })
+        if ($matching.Count -eq 1) { $selected = $matching[0].Name }
+        $profileStatus = 'Loaded'
+    } catch {
+        $profileStatus = 'INVALID: ' + $_.Exception.Message
+    }
+} elseif (Test-Path -LiteralPath $legacyFile -PathType Leaf) {
+    $profileStatus = 'Legacy viewer.json detected; Viewer will migrate automatically'
+}
+$listeners = @()
 try {
-    $tcp = @(Get-NetTCPConnection -LocalPort 15444 -State Listen -ErrorAction Stop |
+    $listeners = @(Get-NetTCPConnection -LocalPort 15444 -State Listen -ErrorAction Stop |
         Select-Object LocalAddress, LocalPort, OwningProcess)
 } catch { }
 [pscustomobject]@{
     Probe = 'TJ.RemoteAccess Lab (READ_ONLY)'
     TimeUtc = [DateTime]::UtcNow.ToString('o')
     Components = $files
-    ServerConfigExists = Test-Path -LiteralPath $server -PathType Leaf
-    ViewerConfigExists = Test-Path -LiteralPath $viewer -PathType Leaf
-    Tcp15444Listeners = $tcp
+    ServerConfigExists = Test-Path -LiteralPath $serverFile -PathType Leaf
+    LegacyViewerConfigExists = Test-Path -LiteralPath $legacyFile -PathType Leaf
+    ProfileCatalogExists = Test-Path -LiteralPath $profileFile -PathType Leaf
+    ProfileStatus = $profileStatus
+    SavedServerCount = $profileCount
+    SelectedServerName = $selected
+    Tcp15444Listeners = $listeners
     ServiceInstallPerformed = $false
     FirewallChanged = $false
-    Note = 'Compile/config/port metadata only. Actual GUI and input require an isolated-PC test.'
+    Note = 'Metadata only. GUI and input require isolated Windows acceptance.'
 } | ConvertTo-Json -Depth 6

@@ -13,11 +13,16 @@ internal static class LabSetup
         {
             if (args.Length == 1 && args[0].Equals("init", StringComparison.OrdinalIgnoreCase))
                 return Init();
-            if (args.Length == 2 && args[0].Equals("import-client", StringComparison.OrdinalIgnoreCase))
-                return ImportClient(args[1]);
+            if (args.Length is >= 2 and <= 4 &&
+                args[0].Equals("import-client", StringComparison.OrdinalIgnoreCase))
+                return ImportClient(args[1], args.Length >= 3 ? args[2] : null,
+                                    args.Length >= 4 ? args[3] : null);
+            if (args.Length == 1 && args[0].Equals("list-profiles", StringComparison.OrdinalIgnoreCase))
+                return ListProfiles();
             Console.WriteLine("TJ.RemoteAccess Lab Setup (current-user only)\n" +
                 "  TJ.RemoteAccess.Lab.Setup.exe init\n" +
-                "  TJ.RemoteAccess.Lab.Setup.exe import-client <client-transfer.pfx>\n\n" +
+                "  TJ.RemoteAccess.Lab.Setup.exe import-client <client-transfer.pfx> [name] [host]\n" +
+                "  TJ.RemoteAccess.Lab.Setup.exe list-profiles\n\n" +
                 "Use init on the remote SERVER PC, then transfer the pairing folder " +
                 "securely to the VIEWER PC. No Windows service or firewall rule is created.");
             return 2;
@@ -31,9 +36,9 @@ internal static class LabSetup
 
     private static int Init()
     {
-        if (File.Exists(LabCertificates.ServerFile) || File.Exists(LabCertificates.ViewerFile))
-            throw new InvalidOperationException("Lab configuration already exists. " +
-                "Refusing to overwrite certificates or configured trust pins.");
+        if (File.Exists(LabCertificates.ServerFile))
+            throw new InvalidOperationException("Server is already paired. " +
+                "Refusing to replace an existing server certificate.");
         var pairing = Path.Combine(LabCertificates.ConfigDirectory, "Pairing");
         Directory.CreateDirectory(pairing);
         using var server = LabCertificates.GenerateCertificate(server: true);
@@ -51,7 +56,12 @@ internal static class LabSetup
             ServerSha256 = LabCertificates.Hash(server)
         };
         LabCertificates.WriteSettings(LabCertificates.ServerFile, serverSettings);
-        LabCertificates.WriteSettings(LabCertificates.ViewerFile, viewerSettings);
+        // Preserve any previous Viewer identity. The profile store imports
+        // the legacy viewer.json non-destructively before adding this server.
+        var localProfile = new LabViewerProfileStore().RegisterProvisioned(
+            viewerSettings, "Local lab server");
+        if (!File.Exists(LabCertificates.ViewerFile))
+            LabCertificates.WriteSettings(LabCertificates.ViewerFile, viewerSettings);
         var pairingConfig = Path.Combine(pairing, "viewer.json");
         LabCertificates.WriteSettings(pairingConfig, viewerSettings);
 
@@ -65,7 +75,9 @@ internal static class LabSetup
 
         Console.WriteLine("PAIR INITIALIZED for TEST USE ONLY.");
         Console.WriteLine("Server settings: " + LabCertificates.ServerFile);
-        Console.WriteLine("Viewer settings: " + LabCertificates.ViewerFile);
+        Console.WriteLine("Local Viewer profile: " + localProfile.Name);
+        Console.WriteLine("Viewer profiles: " + new LabViewerProfileStore().CatalogPath);
+        Console.WriteLine("Legacy viewer.json preserved: " + LabCertificates.ViewerFile);
         Console.WriteLine("Pairing folder (SENSITIVE): " + pairing);
         Console.WriteLine("Client PFX export password (COPY NOW, NOT SAVED): " + passphrase);
         Console.WriteLine("Original TightVNC remains untouched.");
@@ -77,35 +89,31 @@ internal static class LabSetup
         return 0;
     }
 
-    private static int ImportClient(string file)
+    private static int ImportClient(string file, string? name, string? host)
     {
-        var inputFile = Path.GetFullPath(file);
-        if (!File.Exists(inputFile))
-            throw new FileNotFoundException("Pairing PFX not found.", inputFile);
-        var viewerConfig = Path.Combine(Path.GetDirectoryName(inputFile)!, "viewer.json");
-        if (!File.Exists(viewerConfig))
-            throw new FileNotFoundException("Matching viewer.json must accompany the PFX.");
-        if (File.Exists(LabCertificates.ViewerFile))
-            throw new InvalidOperationException(
-                "Viewer configuration already exists. Refusing to change pins.");
-        var settings = LabCertificates.LoadSettings<LabViewerSettings>(viewerConfig);
         Console.Write("Enter client PFX password (hidden): ");
         string password = ReadSecret();
-#pragma warning disable SYSLIB0057
-        using (var check = new X509Certificate2(inputFile, password,
-                   X509KeyStorageFlags.EphemeralKeySet))
-#pragma warning restore SYSLIB0057
+        var profile = new LabViewerProfileStore().ImportPairing(
+            file, password, name, host);
+        Console.WriteLine("Pairing registered (existing saved servers retained):");
+        Console.WriteLine("  " + profile);
+        Console.WriteLine("  Server SHA256: " + profile.ServerSha256);
+        Console.WriteLine("  Profiles: " + new LabViewerProfileStore().CatalogPath);
+        Console.WriteLine("You can now select this server in the Viewer.");
+        Console.WriteLine("Erase exported PFX copies from temporary transfer locations.");
+        return 0;
+    }
+
+    private static int ListProfiles()
+    {
+        var catalog = new LabViewerProfileStore().Load();
+        Console.WriteLine($"Saved TJ.RemoteAccess Lab servers: {catalog.Profiles.Count}");
+        foreach (var profile in catalog.Profiles)
         {
-            if (!string.Equals(check.Thumbprint, settings.ClientCertificateThumbprint,
-                               StringComparison.OrdinalIgnoreCase))
-                throw new CryptographicException("PFX does not match viewer.json.");
+            Console.WriteLine((catalog.SelectedProfileId == profile.Id ? "* " : "  ") +
+                              profile);
+            Console.WriteLine("   Server pin SHA256: " + profile.ServerSha256);
         }
-        LabCertificates.ImportPrivateCertificate(inputFile, password);
-        LabCertificates.WriteSettings(LabCertificates.ViewerFile, settings);
-        Console.WriteLine("\nClient certificate installed in CurrentUser\\My.");
-        Console.WriteLine("Viewer config: " + LabCertificates.ViewerFile);
-        Console.WriteLine("Change Host from 127.0.0.1 to server LAN IP ONLY " +
-                          "after enabling explicit LAN listening on server.");
         return 0;
     }
 

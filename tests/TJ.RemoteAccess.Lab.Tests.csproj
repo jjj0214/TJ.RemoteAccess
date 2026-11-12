@@ -18,7 +18,9 @@
   <ItemGroup>
     <Compile Include="lab_protocol_tests.cs" />
     <Compile Include="lab_tls_tests.cs" />
+    <Compile Include="lab_profiles_tests.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\LabProtocol.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\LabCertificates.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\LabViewerProfiles.cs" />
   </ItemGroup>
 </Project>

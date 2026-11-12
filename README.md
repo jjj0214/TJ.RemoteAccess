@@ -27,6 +27,13 @@ for concrete implementation blockers. The static audit never approves deployment
   guarded-v4 native fork. Actual remote desktop GUI/keyboard/mouse operation
   requires hands-on acceptance on an isolated Windows test PC.
 - Full instructions and limits: docs/M2_LAB_INSTALL_TEST_KO.md.
+- Multi-server Viewer update (2026-11-12): a saved server dropdown, Add/Edit/
+  Remove/Identity/Refresh controls and secure per-server certificate pins.
+- Existing viewer.json is auto-migrated without overwriting the original file.
+- CLI Setup import-client now adds multiple independently pinned server profiles.
+- Current-user installer stages every component before replacement and retains
+  LocalAppData certificates/profiles across upgrades.
+- **Latest two-PC acceptance guide:** docs/M2_LAB_FINAL_ACCEPTANCE_20261112_KO.md.
 
 ## Prerequisites
 

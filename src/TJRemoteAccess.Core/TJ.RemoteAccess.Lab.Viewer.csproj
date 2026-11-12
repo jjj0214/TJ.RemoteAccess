@@ -13,6 +13,8 @@
   <ItemGroup>
     <Compile Include="LabProtocol.cs" />
     <Compile Include="LabCertificates.cs" />
+    <Compile Include="LabViewerProfiles.cs" />
+    <Compile Include="LabViewerProfileDialogs.cs" />
     <Compile Include="LabViewer.cs" />
   </ItemGroup>
 </Project>

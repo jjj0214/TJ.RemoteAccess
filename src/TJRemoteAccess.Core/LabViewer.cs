@@ -17,9 +17,7 @@ internal static class LabViewerProgram
         ApplicationConfiguration.Initialize();
         try
         {
-            var settings = LabCertificates.LoadSettings<LabViewerSettings>(
-                LabCertificates.ViewerFile);
-            Application.Run(new LabViewerForm(settings));
+            Application.Run(new LabViewerForm(new LabViewerProfileStore()));
         }
         catch (Exception ex)
         {
@@ -31,7 +29,15 @@ internal static class LabViewerProgram
 
 internal sealed class LabViewerForm : Form
 {
-    private readonly LabViewerSettings _settings;
+    private readonly LabViewerProfileStore _profileStore;
+    private readonly ComboBox _profilePicker = new() {
+        Width = 275, DropDownStyle = ComboBoxStyle.DropDownList
+    };
+    private readonly Button _addProfile = new() { Text = "Add server", AutoSize = true };
+    private readonly Button _editProfile = new() { Text = "Edit", AutoSize = true };
+    private readonly Button _removeProfile = new() { Text = "Remove", AutoSize = true };
+    private readonly Button _detailsProfile = new() { Text = "Identity", AutoSize = true };
+    private readonly Button _refreshProfile = new() { Text = "Refresh", AutoSize = true };
     private readonly TextBox _host = new() { Width = 210 };
     private readonly NumericUpDown _port = new() {
         Minimum = 1024, Maximum = 65535, Width = 80
@@ -57,21 +63,31 @@ internal sealed class LabViewerForm : Form
     private int _lastX, _lastY;
     private long _lastMoveAt;
     private bool _connected;
+    private bool _loadingProfiles;
+    private bool _connecting;
     private readonly System.Windows.Forms.Timer _keepAlive = new() { Interval = 5000 };
 
-    internal LabViewerForm(LabViewerSettings settings)
+    internal LabViewerForm(LabViewerProfileStore profileStore)
     {
-        _settings = settings;
+        _profileStore = profileStore;
         Text = "TJ.RemoteAccess Lab Viewer - TEST ONLY";
-        MinimumSize = new Size(600, 400);
-        Width = 1180;
-        Height = 780;
+        MinimumSize = new Size(720, 440);
+        Width = 1210;
+        Height = 790;
         KeyPreview = true;
-        _host.Text = settings.Host;
-        _port.Value = settings.Port is >= 1024 and <= 65535 ? settings.Port : 15444;
+        _port.Value = 15444;
         var toolbar = new FlowLayoutPanel {
-            Dock = DockStyle.Top, Height = 43, Padding = new Padding(5)
+            Dock = DockStyle.Top, Height = 98, Padding = new Padding(5),
+            AutoScroll = true, WrapContents = true
         };
+        toolbar.Controls.Add(new Label { Text = "Saved server", AutoSize = true,
+            Padding = new Padding(0, 6, 0, 0) });
+        toolbar.Controls.Add(_profilePicker);
+        toolbar.Controls.Add(_addProfile);
+        toolbar.Controls.Add(_editProfile);
+        toolbar.Controls.Add(_removeProfile);
+        toolbar.Controls.Add(_detailsProfile);
+        toolbar.Controls.Add(_refreshProfile);
         toolbar.Controls.Add(new Label {
             Text = "Host", TextAlign = ContentAlignment.MiddleLeft, AutoSize = true,
             Padding = new Padding(0, 6, 0, 0)
@@ -84,6 +100,15 @@ internal sealed class LabViewerForm : Form
         Controls.Add(_status);
         Controls.Add(toolbar);
         _connect.Click += async (_, _) => await ConnectAsync();
+        _profilePicker.SelectedIndexChanged += (_, _) => ApplySelectedProfile();
+        _addProfile.Click += (_, _) => AddServerProfile();
+        _editProfile.Click += (_, _) => EditServerProfile();
+        _removeProfile.Click += (_, _) => RemoveServerProfile();
+        _detailsProfile.Click += (_, _) => {
+            if (SelectedProfile is { } profile)
+                LabViewerProfileDialogs.ShowIdentity(this, profile);
+        };
+        _refreshProfile.Click += (_, _) => ReloadProfiles();
         _disconnect.Click += (_, _) => Disconnect();
         _picture.MouseDown += async (_, e) => {
             _picture.Focus();
@@ -101,20 +126,153 @@ internal sealed class LabViewerForm : Form
                 await SendAsync(LabMessage.KeepAlive, ReadOnlyMemory<byte>.Empty);
         };
         _keepAlive.Start();
-        _status.Text = "Disconnected. TLS authentication and client pairing required.";
+        ReloadProfiles();
+        _status.Text = SelectedProfile is null ? "No server paired. Click Add server." : "Ready. Select a saved server to connect.";
     }
 
     private bool CanControl => _connected && _role == LabRole.Controller;
 
-    private async Task ConnectAsync()
+private LabViewerProfile? SelectedProfile =>
+        _profilePicker.SelectedItem as LabViewerProfile;
+
+    private void ReloadProfiles(string? preferredId = null)
     {
         if (_connected || _tcp is not null) return;
         try
         {
+            var catalog = _profileStore.Load();
+            string selected = preferredId ?? catalog.SelectedProfileId;
+            _loadingProfiles = true;
+            _profilePicker.BeginUpdate();
+            try
+            {
+                _profilePicker.Items.Clear();
+                foreach (var profile in catalog.Profiles)
+                    _profilePicker.Items.Add(profile);
+                var index = catalog.Profiles.FindIndex(p => p.Id == selected);
+                _profilePicker.SelectedIndex = index >= 0 ? index :
+                    (catalog.Profiles.Count == 0 ? -1 : 0);
+            }
+            finally
+            {
+                _profilePicker.EndUpdate();
+                _loadingProfiles = false;
+            }
+            ApplySelectedProfile();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                  or InvalidDataException or InvalidOperationException)
+        {
+            _loadingProfiles = true;
+            _profilePicker.Items.Clear();
+            _loadingProfiles = false;
+            _host.Clear();
+            _port.Value = 15444;
+            _status.Text = "Unable to load server profiles: " + ex.Message;
             _connect.Enabled = false;
-            _status.Text = "Authenticating TLS...";
-            var clientCert = LabCertificates.LoadPrivateCertificate(
-                _settings.ClientCertificateThumbprint);
+        }
+        UpdateProfileControls();
+    }
+
+    private void ApplySelectedProfile()
+    {
+        if (_loadingProfiles || _connected || _tcp is not null) return;
+        if (SelectedProfile is not { } profile)
+        {
+            _host.Clear();
+            _port.Value = 15444;
+            _status.Text = "No server paired. Click Add server.";
+            UpdateProfileControls();
+            return;
+        }
+        _host.Text = profile.Host;
+        _port.Value = profile.Port;
+        try
+        {
+            _profileStore.Select(profile.Id);
+            _status.Text = $"Ready: {profile.Name} | TLS identity {profile.ServerSha256[..12]}...";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                  or InvalidDataException or KeyNotFoundException)
+        {
+            _status.Text = "Unable to select server: " + ex.Message;
+        }
+        UpdateProfileControls();
+    }
+
+    private void UpdateProfileControls()
+    {
+        bool busy = _connecting || _connected || _tcp is not null;
+        _profilePicker.Enabled = !busy;
+        _addProfile.Enabled = !busy;
+        _editProfile.Enabled = !busy && SelectedProfile is not null;
+        _removeProfile.Enabled = !busy && SelectedProfile is not null;
+        _detailsProfile.Enabled = !busy && SelectedProfile is not null;
+        _refreshProfile.Enabled = !busy;
+        _host.Enabled = !busy && SelectedProfile is not null;
+        _port.Enabled = !busy && SelectedProfile is not null;
+        _connect.Enabled = !busy && SelectedProfile is not null;
+        _disconnect.Enabled = busy;
+    }
+
+    private void AddServerProfile()
+    {
+        if (_connected || _tcp is not null) return;
+        var profile = LabViewerProfileDialogs.Import(this, _profileStore);
+        if (profile is not null)
+            ReloadProfiles(profile.Id);
+    }
+
+    private void EditServerProfile()
+    {
+        if (_connected || _tcp is not null || SelectedProfile is not { } selected)
+            return;
+        var updated = LabViewerProfileDialogs.Edit(this, _profileStore, selected);
+        if (updated is not null)
+            ReloadProfiles(updated.Id);
+    }
+
+    private void RemoveServerProfile()
+    {
+        if (_connected || _tcp is not null || SelectedProfile is not { } selected)
+            return;
+        if (MessageBox.Show(this,
+                $"Remove '{selected.Name}' from this Viewer?\n" +
+                "The Windows client certificate and legacy configuration will be preserved.",
+                "Remove saved server", MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question) != DialogResult.Yes)
+            return;
+        try
+        {
+            _profileStore.Remove(selected.Id);
+            ReloadProfiles();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                  or KeyNotFoundException or InvalidDataException)
+        {
+            MessageBox.Show(this, ex.Message, "Unable to remove server",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+    private async Task ConnectAsync()
+    {
+        if (_connecting || _connected || _tcp is not null) return;
+        _connecting = true;
+        try
+        {
+            UpdateProfileControls();
+            var selected = SelectedProfile ?? throw new InvalidOperationException(
+                "Select or pair a saved server before connecting.");
+            // Editing the host is permitted, but it never changes the pinned
+            // server identity or the client certificate for this profile.
+            var host = _host.Text.Trim();
+            var port = (int)_port.Value;
+            var profile = (host != selected.Host || port != selected.Port)
+                ? _profileStore.Edit(selected.Id, selected.Name, host, port)
+                : selected;
+            _status.Text = $"Authenticating TLS: {profile.Name}...";
+            using var clientCert = LabCertificates.LoadPrivateCertificate(
+                profile.ClientCertificateThumbprint);
             if (!LabCertificates.ValidatePinned(clientCert, LabCertificates.Hash(clientCert),
                                                 LabCertificates.ClientEku))
                 throw new AuthenticationException("Viewer certificate has invalid EKU/expiry.");
@@ -123,7 +281,7 @@ internal sealed class LabViewerForm : Form
             var token = _stop.Token;
             _tcp = new TcpClient();
             _tcp.NoDelay = true;
-            await _tcp.ConnectAsync(_host.Text.Trim(), (int)_port.Value, token)
+            await _tcp.ConnectAsync(profile.Host, profile.Port, token)
                       .AsTask().WaitAsync(TimeSpan.FromSeconds(12), token);
             _tls = new SslStream(_tcp.GetStream(), leaveInnerStreamOpen: false);
             var options = new SslClientAuthenticationOptions
@@ -133,7 +291,7 @@ internal sealed class LabViewerForm : Form
                 EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
                 CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
                 RemoteCertificateValidationCallback = (_, cert, _, _) =>
-                    LabCertificates.ValidatePinned(cert, _settings.ServerSha256,
+                    LabCertificates.ValidatePinned(cert, profile.ServerSha256,
                                                    LabCertificates.ServerEku)
             };
             await _tls.AuthenticateAsClientAsync(options, token)
@@ -149,18 +307,21 @@ internal sealed class LabViewerForm : Form
             _desktopHeight = metadata.Height;
             _role = metadata.Role;
             _connected = true;
-            _disconnect.Enabled = true;
-            _status.Text = $"Connected ({_role}), desktop {_desktopWidth}x{_desktopHeight}. " +
+            _status.Text = $"Connected to {profile.Name} ({_role}), desktop {_desktopWidth}x{_desktopHeight}. " +
                            "Secure desktop/UAC not supported.";
             // JPEG decode runs off UI thread; only final bitmap swap uses UI.
-            _ = Task.Run(() => ReadFramesAsync(_tls, token), token);
+            var activeStream = _tls;
+            _ = Task.Run(() => ReadFramesAsync(activeStream, token), token);
         }
         catch (Exception ex)
         {
             Disconnect();
             _status.Text = "Connection failed: " + ex.Message;
         }
-        finally { _connect.Enabled = !_connected; }
+        finally {
+            _connecting = false;
+            UpdateProfileControls();
+        }
     }
 
     private async Task ReadFramesAsync(SslStream stream, CancellationToken token)
@@ -187,7 +348,7 @@ internal sealed class LabViewerForm : Form
                 }
                 try {
                     BeginInvoke(new Action(() => {
-                        if (IsDisposed) {
+                        if (IsDisposed || !_connected || !ReferenceEquals(_tls, stream)) {
                             bitmap.Dispose();
                             return;
                         }
@@ -207,14 +368,20 @@ internal sealed class LabViewerForm : Form
             }
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException
-                                   or OperationCanceledException or ObjectDisposedException)
+                                   or OperationCanceledException or ObjectDisposedException
+                                   or ArgumentException or System.Runtime.InteropServices.ExternalException)
         {
-            if (!token.IsCancellationRequested && !IsDisposed)
+            if (!token.IsCancellationRequested && !IsDisposed && ReferenceEquals(_tls, stream))
                 ShowStatus("Disconnected: " + ex.Message);
         }
         finally {
             if (!IsDisposed)
-                try { BeginInvoke(new Action(Disconnect)); }
+                try {
+                    BeginInvoke(new Action(() => {
+                        // An old reader must never close a newly connected session.
+                        if (ReferenceEquals(_tls, stream)) Disconnect();
+                    }));
+                }
                 catch (InvalidOperationException) { }
         }
     }
@@ -312,9 +479,16 @@ internal sealed class LabViewerForm : Form
         _stop?.Dispose();
         _stop = null;
         _heldKeys.Clear();
-        _connect.Enabled = true;
-        _disconnect.Enabled = false;
-        if (!IsDisposed) _status.Text = "Disconnected (LAB test connection closed).";
+        _role = LabRole.ViewOnly;
+        _frameCount = 0;
+        var oldImage = _picture.Image;
+        _picture.Image = null;
+        oldImage?.Dispose();
+        if (!IsDisposed) {
+            ReloadProfiles();
+            UpdateProfileControls();
+            _status.Text = "Disconnected. Choose a saved server to reconnect.";
+        }
     }
 
     protected override void Dispose(bool disposing)

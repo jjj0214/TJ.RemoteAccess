@@ -11,6 +11,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="LabCertificates.cs" />
+    <Compile Include="LabViewerProfiles.cs" />
     <Compile Include="LabSetup.cs" />
   </ItemGroup>
 </Project>

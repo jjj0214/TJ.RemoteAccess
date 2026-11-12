@@ -66,3 +66,18 @@ protocol security or authorize service installation.
 - The Lab is **not** the production fork, and does not implement unattended
   Windows Service, secure desktop/UAC, enterprise PKI or PIE.FileTransfer IPC.
 - See `docs/M2_LAB_INSTALL_TEST_KO.md` and `docs/M2_LAB_DEV_CHECKPOINT_20261111.md`.
+
+## Multi-server Viewer update — 2026-11-12
+
+- Viewer profiles save name, IP, port, server SHA-256 pin and client certificate thumbprint.
+- Existing viewer.json is migrated without modification or deletion.
+- GUI Add/Edit/Remove/Identity/Refresh; Setup import-client and list-profiles.
+- Repeated pairing is idempotent; saved catalog uses an exclusive file lock and backup.
+- Lab .NET 9 Release solution: **PASS, zero errors and warnings**.
+- Lab xUnit TLS/protocol/profile and legacy-backup recovery tests: **27/27 PASS**.
+- Python offline/installer contracts: **51/51 PASS**.
+- Native M2 C++ Release x64 build: **PASS**; Git diff --check: **PASS**.
+- PowerShell install/publish full runtime and actual new GUI switching: **NOT EXECUTED**
+  through the JJJ Dev MCP. User isolated two-PC acceptance is required.
+- User confirmed earlier Lab GUI connection; new profile UI remains to be tested.
+- Details: docs/M2_LAB_FINAL_ACCEPTANCE_20261112_KO.md.
