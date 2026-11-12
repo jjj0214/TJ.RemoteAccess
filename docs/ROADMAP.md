@@ -8,7 +8,7 @@
 | M1.d | Audit service / IPC / registry / MSI namespace from extracted source | **Source audit implemented; service/IPC security still blocking** |
 | M2.policy | Session gate, authenticated transport binding coordinator, typed native input, CNG session IDs | **Release x64 COMPILE PASS; native runtime tests not executed; no actual mTLS yet** |
 | M2.a | Separate names / hook artifacts / listener interlocks in fork | **guarded-v4 Server/Viewer/Control/HookLoader/Hook DLL Release x64 COMPILE PASS; no service coexistence verification** |
-| M2.lab | Interactive .NET 9 Lab with multi-server pinned profiles, legacy/backup migration, staged update | **Release build PASS; 27/27 Windows xUnit and 51/51 Python tests PASS. Previous GUI connection user-confirmed; new profile UI awaits two-PC acceptance** |
+| M2.lab | Interactive .NET 9 Lab with multi-server pinned profiles, legacy/backup migration, staged update and hardened transport | **User two-PC acceptance 8/8 PASS at f06bd42; follow-up 35/35 xUnit and 55/55 Python tests PASS, builds PASS. Revised hardening awaits field recheck** |
 | M2.b | Original + fork parallel installation and independent operation | **NOT TESTED** |
 | M2.c | Logon / lock / UAC / reboot | **NOT TESTED** |
 | M3 | mTLS Gateway, no direct RFB, least-privilege EngineHost, IPC ACL | **NOT IMPLEMENTED** |

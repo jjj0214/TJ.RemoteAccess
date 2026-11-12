@@ -81,3 +81,22 @@ protocol security or authorize service installation.
   through the JJJ Dev MCP. User isolated two-PC acceptance is required.
 - User confirmed earlier Lab GUI connection; new profile UI remains to be tested.
 - Details: docs/M2_LAB_FINAL_ACCEPTANCE_20261112_KO.md.
+
+## User two-PC acceptance and post-acceptance hardening (2026-11-12)
+
+- User-confirmed live Server/Viewer acceptance: **8/8 PASS** on f06bd426.
+- Validated: legacy profile restored, new server pairing, A/B switching,
+  keyboard/mouse/display, settings persistence, duplicate pairing protection,
+  reconnect behavior, 3-viewer limit, fourth denied, original TightVNC unaffected.
+- **After** that acceptance: bound input packets to 32 bytes; bound TLS+Hello
+  admission, idle reads and frame writes; stop-session input isolation; bounded
+  UI frame queue; reduced JPEG decoding memory allocations; certificate expiry
+  metadata in read-only PowerShell probe.
+- Lab .NET 9 Release build: **PASS, 0 errors/warnings**.
+- xUnit protocol, TLS, byte-compatible concurrent transmission and profile regression: **35/35 PASS**.
+- Python offline + hardening source tests: **55/55 PASS**.
+- Native M2 C++ Release x64 build: **PASS**.
+- These new patches have **not yet** been rerun in a real interactive
+  two-PC session. See docs/M2_LAB_POST_ACCEPTANCE_HARDENING_20261112_KO.md.
+- The GPL-derived native fork remains blocked for deployment; no claim of
+  unattended Windows Service/UAC/production readiness.

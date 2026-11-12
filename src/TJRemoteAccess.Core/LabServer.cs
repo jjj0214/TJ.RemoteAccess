@@ -60,6 +60,7 @@ internal sealed class LabServerForm : Form
     private readonly object _guard = new();
     private readonly HashSet<Guid> _sessions = new();
     private Guid? _controller;
+    private bool _running;
     private readonly HashSet<ushort> _pressedKeys = new();
     private byte _pressedMouse;
     private readonly SemaphoreSlim _handshakeLimit = new(4);
@@ -128,6 +129,10 @@ internal sealed class LabServerForm : Form
             _shutdown = new CancellationTokenSource();
             _listener = new TcpListener(_address, _settings.Port);
             _listener.Start(backlog: 6);
+            lock (_guard)
+            {
+                _running = true;
+            }
             _start.Enabled = false;
             _stopButton.Enabled = true;
             Log("Listening with mandatory TLS 1.2/1.3 + client certificate pinning.");
@@ -149,9 +154,12 @@ internal sealed class LabServerForm : Form
         _listener = null;
         _start.Enabled = true;
         _stopButton.Enabled = false;
-        lock (_guard) {
+        lock (_guard)
+        {
+            _running = false;
             LabNativeInput.ReleaseAll(_pressedKeys, ref _pressedMouse);
             _controller = null;
+            _sessions.Clear();
         }
         Log("Server stopped (existing TLS connections closing).");
     }
@@ -208,12 +216,10 @@ internal sealed class LabServerForm : Form
                 };
                 await tls.AuthenticateAsServerAsync(tlsOptions, token)
                          .WaitAsync(TimeSpan.FromSeconds(12), token);
-                _handshakeLimit.Release();
-                handshakePermit = false;
 
                 // A TLS-authenticated channel still needs an application-level
                 // protocol/version check before reserving one of three slots.
-                var hello = await LabWire.ReadAsync(tls, token)
+                var hello = await LabWire.ReadAsync(tls, token, LabWire.MaxControlPacketBytes)
                                          .WaitAsync(TimeSpan.FromSeconds(5), token);
                 if (hello.Type != LabMessage.Hello ||
                     hello.Payload.Length != 1 || hello.Payload[0] != LabWire.Version)
@@ -221,6 +227,8 @@ internal sealed class LabServerForm : Form
 
                 lock (_guard)
                 {
+                    if (!_running || token.IsCancellationRequested)
+                        throw new OperationCanceledException("Server is stopping.", token);
                     if (_sessions.Count >= 3)
                         throw new InvalidOperationException("Maximum three viewers reached.");
                     _sessions.Add(session);
@@ -230,6 +238,10 @@ internal sealed class LabServerForm : Form
                         role = LabRole.Controller;
                     }
                 }
+                // Bound TLS, protocol Hello and admission by the same
+                // semaphore to limit pending/unauthenticated sessions.
+                _handshakeLimit.Release();
+                handshakePermit = false;
                 Log($"Mutual TLS client connected ({role}).");
                 using var writeMutex = new SemaphoreSlim(1, 1);
                 await LabWire.WriteAsync(tls, writeMutex, LabMessage.Welcome,
@@ -251,7 +263,9 @@ internal sealed class LabServerForm : Form
                 {
                     while (!token.IsCancellationRequested)
                     {
-                        var packet = await LabWire.ReadAsync(tls, token);
+                        var packet = await LabWire.ReadAsync(
+                            tls, token, LabWire.MaxControlPacketBytes)
+                            .WaitAsync(TimeSpan.FromSeconds(25), token);
                         if (packet.Type == LabMessage.KeepAlive && packet.Payload.Length == 0)
                             continue;
                         if (packet.Type is not (LabMessage.Key or LabMessage.Pointer))
@@ -260,7 +274,8 @@ internal sealed class LabServerForm : Form
                         {
                             // This is the FINAL input permission check, not a
                             // hint from the viewer or the welcome packet.
-                            if (_controller != session || !_sessions.Contains(session))
+                            if (!_running || token.IsCancellationRequested ||
+                                _controller != session || !_sessions.Contains(session))
                                 continue;
                             if (packet.Type == LabMessage.Key) {
                                 var key = LabWire.ParseKey(packet.Payload);
@@ -317,7 +332,8 @@ internal sealed class LabServerForm : Form
             var frame = CaptureJpeg(_desktop);
             if (frame.Length < LabWire.MaxFrameBytes)
                 await LabWire.WriteAsync(tls, writeMutex,
-                                         LabMessage.JpegFrame, frame, token);
+                                         LabMessage.JpegFrame, frame, token)
+                    .WaitAsync(TimeSpan.FromSeconds(10), token);
             await Task.Delay(160, token); // bounded ~6 fps for lab use
         }
     }

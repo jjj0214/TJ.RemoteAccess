@@ -60,6 +60,8 @@ internal sealed class LabViewerForm : Form
     private LabRole _role;
     private int _desktopWidth = 1, _desktopHeight = 1;
     private int _frameCount;
+    // A busy UI must not accumulate an unbounded backlog of decoded Bitmaps.
+    private int _frameUpdatePending;
     private int _lastX, _lastY;
     private long _lastMoveAt;
     private bool _connected;
@@ -330,7 +332,9 @@ private LabViewerProfile? SelectedProfile =>
         {
             while (!token.IsCancellationRequested)
             {
-                var packet = await LabWire.ReadAsync(stream, token);
+                using var frameDeadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+                frameDeadline.CancelAfter(TimeSpan.FromSeconds(25));
+                var packet = await LabWire.ReadAsync(stream, frameDeadline.Token);
                 if (packet.Type != LabMessage.JpegFrame)
                     throw new InvalidDataException("Unexpected server packet.");
                 if (packet.Payload.Length < 4 ||
@@ -342,26 +346,46 @@ private LabViewerProfile? SelectedProfile =>
                     (long)image.Width * image.Height > 9_000_000)
                     throw new InvalidDataException("Remote JPEG dimensions exceed lab limits.");
                 var bitmap = new Bitmap(image);
-                if (IsDisposed) {
+                if (Interlocked.CompareExchange(ref _frameUpdatePending, 1, 0) != 0)
+                {
+                    // A busy UI never accumulates a queue of decoded Bitmaps.
+                    bitmap.Dispose();
+                    continue;
+                }
+                if (IsDisposed)
+                {
+                    Interlocked.Exchange(ref _frameUpdatePending, 0);
                     bitmap.Dispose();
                     return;
                 }
-                try {
-                    BeginInvoke(new Action(() => {
-                        if (IsDisposed || !_connected || !ReferenceEquals(_tls, stream)) {
-                            bitmap.Dispose();
-                            return;
+                try
+                {
+                    BeginInvoke(new Action(() =>
+                    {
+                        try
+                        {
+                            if (IsDisposed || !_connected || !ReferenceEquals(_tls, stream))
+                            {
+                                bitmap.Dispose();
+                                return;
+                            }
+                            var oldImage = _picture.Image;
+                            _picture.Image = bitmap;
+                            oldImage?.Dispose();
+                            _frameCount++;
+                            if (_frameCount % 30 == 0)
+                                _status.Text = $"Connected ({_role}) | {_frameCount} frames | " +
+                                               $"{_desktopWidth}x{_desktopHeight} | LAB ONLY";
                         }
-                        var old = _picture.Image;
-                        _picture.Image = bitmap;
-                        old?.Dispose();
-                        _frameCount++;
-                        if (_frameCount % 30 == 0)
-                            _status.Text = $"Connected ({_role}) | {_frameCount} frames | " +
-                                           $"{_desktopWidth}x{_desktopHeight} | LAB ONLY";
+                        finally
+                        {
+                            Interlocked.Exchange(ref _frameUpdatePending, 0);
+                        }
                     }));
                 }
-                catch (InvalidOperationException) {
+                catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
+                {
+                    Interlocked.Exchange(ref _frameUpdatePending, 0);
                     bitmap.Dispose();
                     break;
                 }

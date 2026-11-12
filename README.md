@@ -25,7 +25,8 @@ for concrete implementation blockers. The static audit never approves deployment
 - Start Lab Server UI, click Start, then connect Lab Viewer to 127.0.0.1:15444.
 - Independent .NET 9 implementation: it does NOT replace or unblock the GPL
   guarded-v4 native fork. Actual remote desktop GUI/keyboard/mouse operation
-  requires hands-on acceptance on an isolated Windows test PC.
+  passed user two-PC acceptance 8/8 on the previous Lab build. Further transport
+  hardening requires a short recheck before broader test use.
 - Full instructions and limits: docs/M2_LAB_INSTALL_TEST_KO.md.
 - Multi-server Viewer update (2026-11-12): a saved server dropdown, Add/Edit/
   Remove/Identity/Refresh controls and secure per-server certificate pins.
@@ -34,6 +35,8 @@ for concrete implementation blockers. The static audit never approves deployment
 - Current-user installer stages every component before replacement and retains
   LocalAppData certificates/profiles across upgrades.
 - **Latest two-PC acceptance guide:** docs/M2_LAB_FINAL_ACCEPTANCE_20261112_KO.md.
+- **8/8 user acceptance and transport resilience updates:** see
+  docs/M2_LAB_POST_ACCEPTANCE_HARDENING_20261112_KO.md.
 
 ## Prerequisites
 

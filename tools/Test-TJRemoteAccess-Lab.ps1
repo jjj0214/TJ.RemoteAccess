@@ -23,6 +23,51 @@ $configDir = Join-Path $env:LOCALAPPDATA 'TJ.RemoteAccess.Lab'
 $serverFile = Join-Path $configDir 'server.json'
 $legacyFile = Join-Path $configDir 'viewer.json'
 $profileFile = Join-Path $configDir 'viewer-profiles.json'
+$certificates = @{}
+$certificateStoreError = ''
+try {
+    foreach ($certificate in @(Get-ChildItem -Path 'Cert:\CurrentUser\My' -ErrorAction Stop)) {
+        $certificates[$certificate.Thumbprint.ToUpperInvariant()] = $certificate
+    }
+} catch {
+    $certificateStoreError = $_.Exception.Message
+}
+function Get-TJRALabCertificateState {
+    param([string]$Thumbprint)
+    if ([string]::IsNullOrWhiteSpace($Thumbprint)) {
+        return [pscustomobject]@{ State = 'NotConfigured'; DaysRemaining = $null; ValidUntilUtc = $null }
+    }
+    if ($certificateStoreError) {
+        return [pscustomobject]@{ State = 'ProbeUnavailable'; DaysRemaining = $null; ValidUntilUtc = $null }
+    }
+    $candidate = $certificates[$Thumbprint.Trim().ToUpperInvariant()]
+    if ($null -eq $candidate) {
+        return [pscustomobject]@{ State = 'Missing'; DaysRemaining = $null; ValidUntilUtc = $null }
+    }
+    $validUntil = $candidate.NotAfter.ToUniversalTime()
+    $days = [math]::Floor(($validUntil - [DateTime]::UtcNow).TotalDays)
+    $state = if (-not $candidate.HasPrivateKey) { 'NoPrivateKey' } elseif ($days -lt 0) {
+        'Expired'
+    } elseif ($days -le 7) { 'ExpiringSoon' } else { 'Valid' }
+    return [pscustomobject]@{
+        State = $state
+        DaysRemaining = [int]$days
+        ValidUntilUtc = $validUntil.ToString('o')
+    }
+}
+$serverCertificateState = $null
+if (Test-Path -LiteralPath $serverFile -PathType Leaf) {
+    try {
+        $settings = Get-Content -LiteralPath $serverFile -Raw | ConvertFrom-Json
+        $serverCertificateState = Get-TJRALabCertificateState -Thumbprint $settings.ServerCertificateThumbprint
+    } catch {
+        $serverCertificateState = [pscustomobject]@{
+            State = 'InvalidServerConfig'; DaysRemaining = $null; ValidUntilUtc = $null
+        }
+    }
+}
+$viewerCertificateStates = @()
+$profilesForProbe = @()
 $profileCount = 0
 $selected = ''
 $profileStatus = 'No saved profile catalog'
@@ -30,6 +75,7 @@ if (Test-Path -LiteralPath $profileFile -PathType Leaf) {
     try {
         $catalog = Get-Content -LiteralPath $profileFile -Raw | ConvertFrom-Json
         $profileCount = @($catalog.Profiles).Count
+        $profilesForProbe = @($catalog.Profiles)
         $matching = @($catalog.Profiles | Where-Object { $_.Id -eq $catalog.SelectedProfileId })
         if ($matching.Count -eq 1) { $selected = $matching[0].Name }
         $profileStatus = 'Loaded'
@@ -38,6 +84,21 @@ if (Test-Path -LiteralPath $profileFile -PathType Leaf) {
     }
 } elseif (Test-Path -LiteralPath $legacyFile -PathType Leaf) {
     $profileStatus = 'Legacy viewer.json detected; Viewer will migrate automatically'
+}
+foreach ($profile in $profilesForProbe) {
+    $state = Get-TJRALabCertificateState -Thumbprint $profile.ClientCertificateThumbprint
+    $viewerCertificateStates += [pscustomobject]@{
+        ProfileName = [string]$profile.Name
+        CertificateState = $state.State
+        DaysRemaining = $state.DaysRemaining
+        ValidUntilUtc = $state.ValidUntilUtc
+    }
+}
+$attentionCount = @($viewerCertificateStates | Where-Object {
+    $_.CertificateState -ne 'Valid'
+}).Count
+if ($serverCertificateState -and $serverCertificateState.State -ne 'Valid') {
+    $attentionCount++
 }
 $listeners = @()
 try {
@@ -54,6 +115,9 @@ try {
     ProfileStatus = $profileStatus
     SavedServerCount = $profileCount
     SelectedServerName = $selected
+    ServerCertificateStatus = $serverCertificateState
+    ViewerCertificateStatuses = $viewerCertificateStates
+    CertificateAttentionCount = $attentionCount
     Tcp15444Listeners = $listeners
     ServiceInstallPerformed = $false
     FirewallChanged = $false

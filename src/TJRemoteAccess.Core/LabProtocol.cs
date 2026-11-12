@@ -18,6 +18,7 @@ internal readonly record struct LabWelcome(LabRole Role, int Width, int Height,
 internal static class LabWire
 {
     internal const int MaxFrameBytes = 6 * 1024 * 1024;
+    internal const int MaxControlPacketBytes = 32;
     internal const byte Version = 1;
 
     internal static async Task WriteAsync(Stream stream, SemaphoreSlim writeMutex,
@@ -26,29 +27,37 @@ internal static class LabWire
     {
         int size = checked(body.Length + 1);
         if (size > MaxFrameBytes) throw new InvalidDataException("Outgoing packet too large.");
-        var packet = new byte[size + 4];
-        BinaryPrimitives.WriteInt32BigEndian(packet.AsSpan(0, 4), size);
-        packet[4] = (byte)type;
-        body.CopyTo(packet.AsMemory(5));
+        var header = new byte[5];
+        BinaryPrimitives.WriteInt32BigEndian(header.AsSpan(0, 4), size);
+        header[4] = (byte)type;
         await writeMutex.WaitAsync(stop).ConfigureAwait(false);
         try
         {
-            await stream.WriteAsync(packet, stop).ConfigureAwait(false);
+            // Serialized under one lock; no duplicate multi-megabyte JPEG.
+            await stream.WriteAsync(header, stop).ConfigureAwait(false);
+            if (!body.IsEmpty)
+                await stream.WriteAsync(body, stop).ConfigureAwait(false);
             await stream.FlushAsync(stop).ConfigureAwait(false);
         }
         finally { writeMutex.Release(); }
     }
 
-    internal static async Task<LabPacket> ReadAsync(Stream stream, CancellationToken stop)
+    internal static async Task<LabPacket> ReadAsync(Stream stream, CancellationToken stop,
+                                                   int maxPacketBytes = MaxFrameBytes)
     {
+        if (maxPacketBytes is < 1 or > MaxFrameBytes)
+            throw new ArgumentOutOfRangeException(nameof(maxPacketBytes));
         var lengthBytes = new byte[4];
         await stream.ReadExactlyAsync(lengthBytes, stop).ConfigureAwait(false);
         int length = BinaryPrimitives.ReadInt32BigEndian(lengthBytes);
-        if (length < 1 || length > MaxFrameBytes)
+        if (length < 1 || length > maxPacketBytes)
             throw new InvalidDataException("Incoming packet size is invalid.");
-        var buffer = new byte[length];
-        await stream.ReadExactlyAsync(buffer, stop).ConfigureAwait(false);
-        return new LabPacket((LabMessage)buffer[0], buffer.AsSpan(1).ToArray());
+        // Read the tag separately so a JPEG payload is allocated only once.
+        var tag = new byte[1];
+        await stream.ReadExactlyAsync(tag, stop).ConfigureAwait(false);
+        var payload = new byte[length - 1];
+        await stream.ReadExactlyAsync(payload, stop).ConfigureAwait(false);
+        return new LabPacket((LabMessage)tag[0], payload);
     }
 
     internal static byte[] Welcome(LabWelcome value)
