@@ -90,7 +90,16 @@ Result SessionRegistry::RevokeControl(const std::string& actor_principal,
                                       bool actor_is_admin) {
     if (actor_principal.empty()) return Result::Unauthorized;
     std::lock_guard<std::mutex> lock(mu_);
-    if (controller_session_id_.empty()) return Result::Ok;
+    if (controller_session_id_.empty()) {
+        // A transfer may be waiting for the physical key-release ACK. An
+        // administrator revocation must cancel that pending transfer; otherwise
+        // the ACK would silently grant control to the target after revocation.
+        if (input_release_pending_ && !pending_target_session_id_.empty()) {
+            if (!actor_is_admin) return Result::Unauthorized;
+            pending_target_session_id_.clear();
+        }
+        return Result::Ok;
+    }
     const auto it = sessions_.find(controller_session_id_);
     if (!actor_is_admin && (it == sessions_.end() ||
                             it->second.principal_id != actor_principal))

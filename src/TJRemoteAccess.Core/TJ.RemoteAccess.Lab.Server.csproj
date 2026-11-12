@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>TJ.RemoteAccess.Lab.Server</AssemblyName>
+    <RootNamespace>TJ.RemoteAccess.Lab</RootNamespace>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="LabProtocol.cs" />
+    <Compile Include="LabCertificates.cs" />
+    <Compile Include="LabServer.cs" />
+  </ItemGroup>
+</Project>

@@ -4,9 +4,11 @@
 |---|---|---|
 | M1.a | Verify upstream ZIP SHA-256 on connected development PC | **HASH VERIFIED (local archive; 3,018,194 bytes)** |
 | M1.b | Separate public project source and portable C++17 policy core | **IMPLEMENTED / Linux-tested** |
-| M1.c | Validate original Windows TightVNC Server/Viewer Release x64 build | **NOT TESTED** |
-| M1.d | Audit service / IPC / registry / MSI namespace from extracted source | **Audit tool implemented; run on original source pending** |
-| M2.a | Rename service / IPC / registry / MSI identifiers using reviewed patches | **NOT IMPLEMENTED** |
+| M1.c | Validate original Windows TightVNC Server/Viewer Release x64 build | **BLOCKED: original Windows SDK 8.1 toolchain unavailable** |
+| M1.d | Audit service / IPC / registry / MSI namespace from extracted source | **Source audit implemented; service/IPC security still blocking** |
+| M2.policy | Session gate, authenticated transport binding coordinator, typed native input, CNG session IDs | **Release x64 COMPILE PASS; native runtime tests not executed; no actual mTLS yet** |
+| M2.a | Separate names / hook artifacts / listener interlocks in fork | **guarded-v4 Server/Viewer/Control/HookLoader/Hook DLL Release x64 COMPILE PASS; no service coexistence verification** |
+| M2.lab | Separate test-only .NET 9 mutual-TLS Server/Viewer/Setup with Windows desktop capture and input | **LAB SOLUTION BUILD PASS; 11/11 loopback TLS/protocol tests PASS; install and GUI acceptance pending** |
 | M2.b | Original + fork parallel installation and independent operation | **NOT TESTED** |
 | M2.c | Logon / lock / UAC / reboot | **NOT TESTED** |
 | M3 | mTLS Gateway, no direct RFB, least-privilege EngineHost, IPC ACL | **NOT IMPLEMENTED** |

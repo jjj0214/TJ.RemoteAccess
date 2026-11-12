@@ -1,6 +1,8 @@
 .vs/
 .idea/
 out/
+**/bin/
+**/obj/
 build/
 __pycache__/
 *.pyc
@@ -13,3 +15,6 @@ __pycache__/
 *.suo
 *.zip
 reports/
+# This exact vendor source is imported locally from the SHA-pinned ZIP for M2.
+# Stage/publication of GPL-derived sources requires a separate license review.
+third_party/tightvnc-2.8.90-gpl/

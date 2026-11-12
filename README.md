@@ -1,10 +1,32 @@
 # TJ.RemoteAccess
 
-**Status: M1/M2 foundation (development only, no working remote-control binary).**
+**Status: M2 guarded native fork remains development-only; a separate interactive .NET 9 Lab Server/Viewer is available for isolated-PC testing.**
 
 A standalone, GPL-2.0-or-later project intended to evolve into a Windows remote-access product based on **TightVNC 2.8.90 GPL**. It is independently buildable and contains no proprietary product source code.
 
-This first implementation includes a portable C++17 session-policy core, automated tests, and tools to import and audit the exact upstream GPL source. **It does not yet ship a VNC server/viewer, mTLS gateway, privileged input agent, installer or externally accessible port.** Do not deploy this prototype as a remote-control service.
+The native foundation includes a C++17 session-policy core, EngineSessionGate and guarded GPL source transformations. **The native fork has no deployable authenticated Gateway, privileged input agent or service installer.** The separately implemented Lab Server/Viewer uses mutual TLS certificate pinning and a current-user interactive desktop, not the native fork. Never deploy either as a production remote-control service.
+
+See docs/M2_IMPLEMENTATION.md for the Windows Release x64 compile evidence and the outstanding original TightVNC fork acceptance gates.
+
+Windows 개발 PC에서 빌드와 테스트를 진행하려면 docs/M2_WINDOWS_TEST_KO.md를 참고하세요. 파생 Server/Viewer 시험 빌드는 tools/Build-M2Fork.ps1이 원본 GPL ZIP을 검증한 후 별도 작업 폴더에 생성합니다.
+
+Windows M2 progress (2026-11-11): source-only `NativeInputBridge` and Win32 namespace
+transformation tests compile/pass, and the derived Server/Viewer compile with MSBuild.
+**Neither RFB authentication nor actual screen/input transport has passed runtime QA.**
+See `docs/M2_RFB_INTEGRATION_REVIEW.md` and `tools/audit_m2_fork_security.py`
+for concrete implementation blockers. The static audit never approves deployment.
+
+## Interactive Lab remote-control prototype (Windows, test PC only)
+
+- Solution: TJ.RemoteAccess.Lab.sln (Server, Viewer, Setup, xUnit tests).
+- Build: dotnet build TJ.RemoteAccess.Lab.sln -c Release
+- Install current user: powershell -NoProfile -ExecutionPolicy Bypass -File ./tools/Install-TJRemoteAccess-Lab.ps1 -Mode Both
+- Create local server/client certificates with the installed Lab.Setup.exe init.
+- Start Lab Server UI, click Start, then connect Lab Viewer to 127.0.0.1:15444.
+- Independent .NET 9 implementation: it does NOT replace or unblock the GPL
+  guarded-v4 native fork. Actual remote desktop GUI/keyboard/mouse operation
+  requires hands-on acceptance on an isolated Windows test PC.
+- Full instructions and limits: docs/M2_LAB_INSTALL_TEST_KO.md.
 
 ## Prerequisites
 
