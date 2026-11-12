@@ -10,6 +10,7 @@ using System.Runtime.InteropServices;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Windows.Forms;
+using Microsoft.Win32;
 
 namespace TJ.RemoteAccess.Lab;
 
@@ -22,7 +23,8 @@ internal static class LabServerProgram
         try
         {
             var settings = LabCertificates.LoadSettings<LabServerSettings>(LabCertificates.ServerFile);
-            bool explicitlyAllowLan = args.Any(x => x == "--allow-lan");
+            var launch = LabServerLaunchOptions.Parse(args);
+            bool explicitlyAllowLan = launch.AllowLan;
             if (!IPAddress.TryParse(settings.ListenAddress, out var ip))
                 throw new InvalidDataException("ListenAddress must be an explicit IP address.");
             if (!IPAddress.IsLoopback(ip) && !explicitlyAllowLan)
@@ -36,7 +38,7 @@ internal static class LabServerProgram
             if (!LabCertificates.ValidatePinned(cert, LabCertificates.Hash(cert),
                                                 LabCertificates.ServerEku))
                 throw new InvalidDataException("Configured local server certificate invalid.");
-            Application.Run(new LabServerForm(settings, ip, cert));
+            Application.Run(new LabServerForm(settings, ip, cert, launch.AutoStart));
         }
         catch (Exception ex)
         {
@@ -54,6 +56,7 @@ internal sealed class LabServerForm : Form
     private readonly LabServerClientRoster _clientRoster;
     private readonly LabPasswordAccess _passwordAccess = new();
     private readonly LabPasswordAttemptLimiter _passwordLimiter = new();
+    private readonly LabAuditWriter _audit = new();
     private readonly RichTextBox _events = new() { ReadOnly = true, Dock = DockStyle.Fill };
     private readonly Label _summary = new() {
         AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(12)
@@ -75,7 +78,8 @@ internal sealed class LabServerForm : Form
     private readonly Rectangle _desktop;
 
     internal LabServerForm(LabServerSettings settings, IPAddress address,
-                           X509Certificate2 serverCert)
+                           X509Certificate2 serverCert,
+                           bool autoStart = false)
     {
         _settings = settings;
         _address = address;
@@ -105,9 +109,38 @@ internal sealed class LabServerForm : Form
         };
         _passwordButton.Click += (_, _) => LabPasswordAccessDialog.Show(this, _passwordAccess, _settings, _serverCert);
         FormClosing += (_, _) => StopServer();
+        SystemEvents.SessionSwitch += OnWindowsSessionSwitch;
+        FormClosed += (_, _) => SystemEvents.SessionSwitch -= OnWindowsSessionSwitch;
+        FormClosed += (_, _) => _ = _audit.DisposeAsync();
+        if (autoStart)
+            Shown += (_, _) => StartServer();
         UpdateSummary();
         Log("Interactive screen share only. Lock screen/UAC are NOT supported.");
         Log("Mutual TLS certificate access remains available; optional password TLS is disabled by default.");
+    }
+
+    // Security boundary: stop accepting remote input/screen frames whenever
+    // Windows changes the interactive desktop. Never auto-restart on unlock.
+    private void OnWindowsSessionSwitch(object sender, SessionSwitchEventArgs args)
+    {
+        if (args.Reason is not (SessionSwitchReason.SessionLock or
+            SessionSwitchReason.SessionLogoff or
+            SessionSwitchReason.ConsoleDisconnect or
+            SessionSwitchReason.RemoteDisconnect or
+            SessionSwitchReason.SessionRemoteControl)) return;
+        if (IsDisposed || !IsHandleCreated) return;
+        void Suspend()
+        {
+            if (IsDisposed || _listener is null) return;
+            Log("Windows session changed (" + args.Reason + "); remote access stopped.");
+            StopServer();
+        }
+        if (InvokeRequired)
+        {
+            try { BeginInvoke(new Action(Suspend)); }
+            catch (InvalidOperationException) { }
+        }
+        else Suspend();
     }
 
     private void UpdateSummary()
@@ -130,6 +163,7 @@ internal sealed class LabServerForm : Form
             return;
         }
         _events.AppendText($"[{DateTime.Now:HH:mm:ss}] {value}{Environment.NewLine}");
+        _audit.TryRecord("LabServer", value);
         if (_events.TextLength > 45000)
             _events.Text = _events.Text[^25000..];
         _events.ScrollToCaret();

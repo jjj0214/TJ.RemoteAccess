@@ -12,12 +12,17 @@ namespace TJ.RemoteAccess.Lab;
 internal static class LabViewerProgram
 {
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
         try
         {
-            Application.Run(new LabViewerForm(new LabViewerProfileStore()));
+            var launch = LabViewerLaunchOptions.Parse(args);
+            var store = new LabViewerProfileStore();
+            // Resolve before opening: an invalid ID must never silently
+            // connect the previously selected, different server.
+            launch.Resolve(store.Load());
+            Application.Run(new LabViewerForm(store, launch));
         }
         catch (Exception ex)
         {
@@ -70,7 +75,7 @@ internal sealed class LabViewerForm : Form
     private bool _connecting;
     private readonly System.Windows.Forms.Timer _keepAlive = new() { Interval = 5000 };
 
-    internal LabViewerForm(LabViewerProfileStore profileStore)
+    internal LabViewerForm(LabViewerProfileStore profileStore, LabViewerLaunchOptions? launch = null)
     {
         _profileStore = profileStore;
         Text = "TJ.RemoteAccess Lab Viewer - TEST ONLY";
@@ -131,7 +136,11 @@ internal sealed class LabViewerForm : Form
                 await SendAsync(LabMessage.KeepAlive, ReadOnlyMemory<byte>.Empty);
         };
         _keepAlive.Start();
-        ReloadProfiles();
+        ReloadProfiles(launch?.ProfileId);
+        if (launch is { Connect: true })
+        {
+            Shown += async (_, _) => await ConnectAsync();
+        }
         _status.Text = SelectedProfile is null ? "No server paired. Click Add server." : "Ready. Select a saved server to connect.";
     }
 

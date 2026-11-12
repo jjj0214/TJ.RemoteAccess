@@ -24,6 +24,10 @@
     <Compile Include="lab_client_tls_authorization_tests.cs" />
     <Compile Include="lab_shared_frames_tests.cs" />
     <Compile Include="lab_password_mode_tests.cs" />
+    <Compile Include="lab_viewer_launch_tests.cs" />
+    <Compile Include="m3_ipc_security_tests.cs" />
+    <Compile Include="lab_server_launch_tests.cs" />
+    <Compile Include="lab_audit_tests.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\LabPasswordAccess.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\LabSharedFrames.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\LabServerClients.cs" />
@@ -31,5 +35,10 @@
     <Compile Include="..\src\TJRemoteAccess.Core\LabProtocol.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\LabCertificates.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\LabViewerProfiles.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\LabViewerLaunch.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\M3IpcProtocol.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\M3WindowsPipe.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\LabServerLaunch.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\LabAuditWriter.cs" />
   </ItemGroup>
 </Project>

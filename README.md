@@ -47,6 +47,10 @@ for concrete implementation blockers. The static audit never approves deployment
   port 15445 (default disabled; existing client-certificate port 15444 remains
   unchanged). Server GUI generates Viewer-2/Viewer-3 PFX bundles directly:
   docs/M2_LAB_PASSWORD_AND_GUI_PAIRING_20261112_KO.md.
+- Current-user startup, trusted-profile-only external Viewer CLI, audited
+  connections, M3 named-pipe authentication, and unsigned offline packaging
+  have isolated tests, but do NOT constitute Windows Service/UAC completion.
+  Details and remaining gates: docs/M3_M6_PROGRESS_AND_GATES_20261113_KO.md.
 
 ## Prerequisites
 

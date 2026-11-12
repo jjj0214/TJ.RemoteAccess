@@ -12,13 +12,13 @@
 | M2.lab.clients | Independent Viewer client certificates, local allowlist, disable, ViewOnly/Controller | **Implemented; Windows TLS roster handshake and revocation loopback tested; 60/60 xUnit PASS overall** |
 | M2.lab.capture | One shared JPEG producer for three TLS viewers + read-only performance sampler | **Built + in-memory concurrency tested; CPU/fps and GUI LAN runtime pending** |
 | M2.lab.access | Interactive Viewer-2/Viewer-3 PFX generator and optional password over pinned TLS port +1 | **Implemented; 74/74 xUnit Windows Schannel tests and 70/70 Python tests PASS; new GUI/two-PC validation pending** |
-| M3.design | Windows Service / interactive SessionAgent privilege and IPC boundary | **Design documented; service, Agent and secure desktop NOT IMPLEMENTED** |
+| M3.design | Windows Service / interactive SessionAgent privilege and IPC boundary | **Design + isolated status-only IPC/ACL/HMAC proof tests; actual service, Agent and secure desktop NOT IMPLEMENTED** |
 | M2.b | Original + fork parallel installation and independent operation | **NOT TESTED** |
-| M2.c | Logon / lock / UAC / reboot | **NOT TESTED** |
-| M3 | mTLS Gateway, no direct RFB, least-privilege EngineHost, IPC ACL | **NOT IMPLEMENTED** |
-| M4 | Independent Viewer / client management API and integration with an external management client | **NOT IMPLEMENTED** |
-| M5 | 270 PPM / RTX3080 / RTX4080 / 3-viewer performance | **NOT TESTED** |
-| M6 | Signed installation/update and rollback | **NOT IMPLEMENTED** |
+| M2.c | Logon / lock / UAC / reboot | **Lab lock/logoff fail-closed handler and opt-in per-user logon scheduled task implemented; real lock/reboot/UAC testing pending** |
+| M3 | mTLS Gateway, no direct RFB, least-privilege EngineHost, IPC ACL | **Standalone ACL + logon SID + PID/session + challenge-response IPC tests PASS; actual Gateway/Service/Agent/EngineHost NOT IMPLEMENTED** |
+| M4 | Independent Viewer / client management API and integration with an external management client | **Pinned profile-id CLI and JSON enumeration implemented; external PIE.FileTransfer integration NOT IMPLEMENTED** |
+| M5 | 270 PPM / RTX3080 / RTX4080 / 3-viewer performance | **Read-only measurement script available; field performance NOT TESTED** |
+| M6 | Signed installation/update and rollback | **Unsigned offline ZIP + SHA-256 manifest/rollback scripts added; runtime installer test/code signing NOT DONE** |
 | M7 | Customer site migration and original TightVNC removal | **NOT STARTED** |
 
 ## Immediate follow-up on Windows

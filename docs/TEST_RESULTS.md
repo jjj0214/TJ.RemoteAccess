@@ -141,3 +141,22 @@ protocol security or authorize service installation.
 - Real GUI pairing, two-PC LAN password sessions and installer execution
   require user acceptance; NOT automatically verified.
 - Guide: docs/M2_LAB_PASSWORD_AND_GUI_PAIRING_20261112_KO.md.
+
+## M3/M4/M6 follow-up verification (2026-11-13)
+
+- Current-user Server logon scheduling, explicit LAN opt-in and session
+  lock/logoff fail-closed handling added. No SYSTEM service or UAC bypass.
+- Viewer accepts only existing pinned local profile IDs via CLI; Setup
+  exposes a non-secret JSON profile listing for external launchers.
+- Bounded, rotated asynchronous audit events; no screenshots or passwords.
+- M3 named-pipe control plane: exact logon SID from Win32 token groups,
+  remote-pipe rejection, kernel peer PID and Session ID, 32-byte HMAC key
+  and nonce challenge-response. Invalid key rejected before any IPC bytes.
+- Offline ZIP creation and integrity-checked rollback installation scripts
+  added but NOT run in a real PowerShell installer acceptance test.
+- Release .NET 9 Lab build: PASS, 0 errors/warnings.
+- xUnit actual Windows IPC, protocol and Lab tests: **114/114 PASS**.
+- Python static/regression: PASS; native M2 C++ Release x64 compile PASS.
+- Windows Service/Agent, native fork deployment, signed installer, 270 PPM
+  and customer-line migration: NOT implemented / NOT validated.
+- Full gates: docs/M3_M6_PROGRESS_AND_GATES_20261113_KO.md.

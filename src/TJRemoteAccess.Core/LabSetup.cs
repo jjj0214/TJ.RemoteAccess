@@ -19,6 +19,8 @@ internal static class LabSetup
                                     args.Length >= 4 ? args[3] : null);
             if (args.Length == 1 && args[0].Equals("list-profiles", StringComparison.OrdinalIgnoreCase))
                 return ListProfiles();
+            if (args.Length == 1 && args[0] == "list-profiles-json")
+                return ListProfilesJson();
             if (args.Length is 2 or 3 && args[0] == "pair-client")
             {
                 if (args.Length == 3 && args[2] != "--view-only")
@@ -38,6 +40,7 @@ internal static class LabSetup
                 "  TJ.RemoteAccess.Lab.Setup.exe init\n" +
                 "  TJ.RemoteAccess.Lab.Setup.exe import-client <client-transfer.pfx> [name] [host]\n" +
                 "  TJ.RemoteAccess.Lab.Setup.exe list-profiles\n" +
+                "  TJ.RemoteAccess.Lab.Setup.exe list-profiles-json  (external launcher API)\n" +
                 "  TJ.RemoteAccess.Lab.Setup.exe pair-client <name> [--view-only]  (SERVER)\n" +
                 "  TJ.RemoteAccess.Lab.Setup.exe list-clients  (SERVER)\n" +
                 "  TJ.RemoteAccess.Lab.Setup.exe disable-client|enable-client <full-id>\n" +
@@ -133,6 +136,23 @@ internal static class LabSetup
                               profile);
             Console.WriteLine("   Server pin SHA256: " + profile.ServerSha256);
         }
+        return 0;
+    }
+
+    // Read-only machine-consumable interface. No client certificates, secrets,
+    // PFX locations or private key material are ever returned.
+    private static int ListProfilesJson()
+    {
+        var catalog = new LabViewerProfileStore().Load();
+        var data = new {
+            SchemaVersion = 1,
+            SelectedProfileId = catalog.SelectedProfileId,
+            Profiles = catalog.Profiles.Select(p => new {
+                p.Id, p.Name, p.Host, p.Port, p.AuthMode, p.ServerSha256
+            }).ToArray()
+        };
+        Console.OutputEncoding = System.Text.Encoding.UTF8;
+        Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(data));
         return 0;
     }
 
