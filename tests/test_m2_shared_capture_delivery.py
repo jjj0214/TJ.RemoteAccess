@@ -53,6 +53,17 @@ class LabSharedCaptureWiringTests(unittest.TestCase):
         for required in ("Get-Process", "WorkingSetMB", "PrivateMemoryMB",
                          "MachineCPUPercent", "DurationSeconds", "LogicalProcessors"):
             self.assertIn(required, script)
+        for required in (
+            "ValidateSet('Both', 'Server', 'Viewer')",
+            "InitialMatchingProcessCount", "StartedDuringMeasurement",
+            "ProcessSummaries", "ServerObserved", "GdiObjects", "UserObjects",
+            "GetGuiResources", "HandleChange", "GdiObjectChange",
+            "UserObjectChange", "WorkingSetChangeMB", "PrivateMemoryChangeMB",
+            "SummaryOnly", "Warnings", "WarmupSeconds"
+        ):
+            self.assertIn(required, script)
+        self.assertIn("Measurement shorter than 120 seconds", script)
+        self.assertIn("Server NOT observed", script)
         for forbidden in ("Stop-Process", "Start-Process", "Set-Process",
                           "New-NetFirewallRule", "New-Service", "Set-Service",
                           "Set-ItemProperty", "New-Item", "Remove-Item"):

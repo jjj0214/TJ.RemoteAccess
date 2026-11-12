@@ -43,3 +43,50 @@ PowerShell JSON 출력에서 Server 프로세스의 MachineCPUPercent, WorkingSe
 ## 검증 경계
 
 자동 xUnit 검증은 공유 프레임 참조, 시퀀스·최신 상태, 3개 Reader의 동시 읽기/안전한 프레임 건너뛰기를 포함한다. 실제 Windows GDI 화면 캡처 부하와 네트워크 왕복 지연, 디스플레이 재구성, 장시간 메모리 증감은 **실기 검증 전**이다. 실제 성능 수치는 추정/기록하지 않았다.
+
+## 실측 데이터 및 2차 측정 개선 (2026-11-12)
+
+사용자 제공 Viewer-2/Viewer-3 접속 시험은 정상 통과했다. 같은 날 Viewer PC에서 실행한
+기존 30초 측정(JSON UTC 04:54:22~04:54:47)에는 **Viewer 한 프로세스**만 관측되었다.
+처음 두 샘플에서는 TJRA 프로세스가 전혀 발견되지 않았고 Server는 끝까지 관측되지 않았다.
+Viewer PID 41020의 최초/최종 관측치(약 15초 간격)는 다음과 같다:
+
+| 항목 | 최초 관측 | 최종 관측 | 변화 |
+|---|---:|---:|---:|
+| 작업 집합 | 52.1 MB | 79.5 MB | +27.4 MB |
+| Private 메모리 | 14.5 MB | 21.8 MB | +7.3 MB |
+| 스레드 | 22 | 28 | +6 |
+| OS 핸들 | 393 | 649 | +256 |
+
+CPU 유효 구간의 전체 20개 논리 프로세서 대비 수치는 1.28%, 0.03%, 0.76%이며
+세 구간의 단순 평균은 약 **0.69%**다. 최초 CPU는 프로세스 시작 때문에 null이다.
+핸들/메모리 증가 자체는 관측됐지만 짧은 측정에서 시작 직후 리소스 증가일 수 있어
+**누수 확정 근거는 아니다.** 특히 Server의 캡처 CPU/메모리 개선 여부는 이 데이터로
+판정할 수 없다.
+
+### 개선된 읽기 전용 계측 스크립트
+
+`tools/Measure-TJRemoteAccess-Lab.ps1`에 측정 대상 선택과 시작 시점 판별,
+PID/프로세스 시작 시각 식별, GDI/USER 객체 수 및 전후 변화량, 프로세스별
+CPU 평균/메모리/핸들 요약, Server 미검출 경고, 1시간 측정 및 SummaryOnly 출력을 추가했다.
+기존 파라미터만 지정하는 실행 방식도 유지된다. OS 권한이나 Windows 구성에 따라
+GDI/USER 객체 조회가 불가능하면 해당 값은 비어 있을 수 있다.
+
+**Server PC에서 Server를 켜고 Viewer 1명 연결 후** 다음 명령:
+
+    powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Measure-TJRemoteAccess-Lab.ps1 -Target Server -WarmupSeconds 20 -DurationSeconds 120 -IntervalSeconds 10 -Label "One Viewer" -SummaryOnly
+
+동일 서버에 Viewer 3명이 연결된 상태에서:
+
+    powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Measure-TJRemoteAccess-Lab.ps1 -Target Server -WarmupSeconds 20 -DurationSeconds 120 -IntervalSeconds 10 -Label "Three Viewers" -SummaryOnly
+
+**Viewer PC에서 Viewer를 미리 실행·연결한 뒤** 메모리/핸들 추이를 측정하려면:
+
+    powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Measure-TJRemoteAccess-Lab.ps1 -Target Viewer -WarmupSeconds 20 -DurationSeconds 600 -IntervalSeconds 10 -Label "Steady Viewer" -SummaryOnly
+
+출력의 ProcessSummaries, Warnings, InitialMatchingProcessCount, ServerObserved를
+확인한다. CPU 평균은 논리 코어 수로 정규화한 값이며, 시작 직후 샘플이나 30초 결과는
+장시간 안정성을 증명하지 않는다. 1명/3명 실측 결과가 있어야 공유 캡처 효과를 판단한다.
+
+참고: 업데이트한 PowerShell 스크립트의 구문·실행 결과는 사용자의 Windows PC에서
+재검증해야 하며, 현재 자동 테스트는 정적 계약 검사만 포함한다.
