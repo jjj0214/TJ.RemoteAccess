@@ -68,6 +68,40 @@
 
 **자동 테스트가 실제 UI 실행·실제 ZIP 빌드·MSI 설치·서비스 재부팅 테스트를 대체하지는 않는다.** CI 패키지 성공 및 위 실기 수용 전에는 고객사에 설치하지 않는다. 이번 결과는 독립형 **사용자 세션 Preview**이고 Winlogon/UAC, 정식 서명 MSI 및 Windows Service 완전 대체는 별도 단계다.
 
+## 0.5.3-preview ZIP 패키징 오류 수정 (2026-11-16)
+
+이전 `Build-TJRemoteAccess-Preview-OfflinePackage.ps1` 사용 시 발생한
+
+```text
+Archive missing manifested file: Server/TJ.RemoteAccess.Server.exe
+Offline application package build failed.
+```
+
+오류는 **매니페스트의 `/` 경로와 ZIP 내부의 파일 경로가 다를 수 있었던 패키징 문제**이다. 기존에는 Windows `Compress-Archive` 출력에 의존하면서 정확한 상대 경로를 강제하지 않았고, 이후 문자열 완전 일치 검사를 수행했다. 실패 당시의 ZIP이 보존되지 않았으므로 실제 압축 항목 표기는 단정하지 않는다.
+
+수정에서는 `New-TJRemoteAccess-PreviewZip.ps1`을 이용해 `ZipArchive.CreateEntry`에 **`Server/TJ.RemoteAccess.Server.exe`처럼 정확한 `/` 파일명을 전달**하고, 검증 시 정확한 이름·파일 개수·크기를 확인한다. 누락되면 샘플 ZIP 경로를 오류에 포함한다.
+
+자동 회귀 테스트는 Windows PowerShell 5.1에서 실제로 다음을 수행한다.
+
+- 임시 Git 저장소 생성 및 테스트 Server/Viewer/Setup 실행 파일 생성
+- `Build-TJRemoteAccess-Preview-OfflinePackage.ps1 -SkipBuild` 실행
+- `git archive`, `source.zip`, `manifest.json`, 최종 오프라인 ZIP 및 `.sha256` 생성
+- ZIP 파일 경로·내용·바이트 길이·개별 SHA-256·최종 ZIP SHA-256 검증
+
+테스트는 **가짜 작은 EXE로 전체 패키징 흐름을 시험**하므로, 실제 self-contained Publish와 전체 크기의 사용자용 GUI 묶음은 GitHub Actions 성공 여부를 추가 확인해야 한다.
+
+빌드 실패 후 출력 파일이 남았다면, 동일 버전의 기존 ZIP을 덮어쓰지 않는 정책 때문에 재실행이 거부될 수 있다. 이때 파일을 바로 삭제하기보다 실패 산출물인지 확인·백업한 뒤 다시 빌드한다.
+
+개발 PC `D:\Repository\TJ.RemoteAccess`에서 실행할 경우 `main` 대신 아래 브랜치의 수정 커밋을 먼저 가져와야 한다.
+
+```powershell
+git fetch origin
+git switch feature/chatgpt-m2-engine-foundation
+git pull --ff-only origin feature/chatgpt-m2-engine-foundation
+```
+
+설치는 **GitHub Actions의 새로운 성공한 Run에서 GUI Installer 아티팩트**를 다운로드한 뒤 진행한다. 실패한 과거 Actions 아티팩트를 재사용하지 않는다.
+
 ## 개발자/CI 패키지 생성
 
 테스트 완료 후 **깨끗한 Git HEAD**에서만:

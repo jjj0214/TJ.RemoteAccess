@@ -54,6 +54,12 @@ for concrete implementation blockers. The static audit never approves deployment
   It accepts an offline ZIP and SHA-256, shows progress/logs/active
   TJRA process IDs, validates every manifest file before changing any
   installed component, and rolls back incomplete component swaps.
+  The offline ZIP builder writes explicit forward-slash names using
+  `tools/New-TJRemoteAccess-PreviewZip.ps1` (never implicit Windows
+  `Compress-Archive` file names). Windows integration tests run the exact
+  builder on a disposable Git repository and verify each ZIP manifest name,
+  size and SHA-256 to prevent the previously reported
+  `Archive missing manifested file` regression.
   Build artifact is produced in GitHub Actions from
   `tools/Build-TJRemoteAccess-Preview-GuiPackage.ps1`;
   this is an **unsigned EXE setup window, not an MSI**.
@@ -71,7 +77,7 @@ for concrete implementation blockers. The static audit never approves deployment
   production security, Win10/11 compatibility or unattended/secure desktop
   behavior. The standalone build is a **PREVIEW, NOT a finished TightVNC
   replacement**. Do not deploy at customer facilities.
-- Release build of Product and Lab solutions and C++ native test projects, Windows xUnit **167/167**, product-preview xUnit **40/40**, and Python unittest all passed (2026-11-16). Windows PowerShell AST parsing of installer scripts passed; actual installer/SCM execution, GUI acceptance, code signing and MSI are **not tested**.
+- Release build of Product and Lab solutions and C++ native test projects, Windows xUnit **168/168**, product-preview xUnit **42/42**, and Python unittest all passed (2026-11-16). Windows PowerShell AST parsing of installer scripts passed; actual installer/SCM execution, GUI acceptance, code signing and MSI are **not tested**.
 - Windows test gates and initial commands:
   `docs/STANDALONE_PREVIEW_BUILD_TEST_20261116_KO.md`. Tray-specific
   test steps and 0.5.1-preview acceptance checklist:

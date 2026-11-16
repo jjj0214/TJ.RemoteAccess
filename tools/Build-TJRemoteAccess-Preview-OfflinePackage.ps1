@@ -98,20 +98,47 @@ try {
     [System.IO.File]::WriteAllText((Join-Path $stage 'manifest.json'),
         $manifestText + [Environment]::NewLine,
         [System.Text.UTF8Encoding]::new($false))
-    Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -ErrorAction Stop
+    # Compress-Archive on Windows PowerShell 5.1 does NOT guarantee '/'
+    # directory separators in archive FullName. The manifest ALWAYS uses '/'.
+    # Build explicitly named ZipArchive entries, then verify exact names.
+    Write-Host '[ZIP] Creating explicit forward-slash entry names...'
+    & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (
+        Join-Path $PSScriptRoot 'New-TJRemoteAccess-PreviewZip.ps1'
+    ) -StageDirectory $stage -DestinationZip $zip
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $zip -PathType Leaf)) {
+        throw "Offline ZIP creation failed. ExitCode=$LASTEXITCODE"
+    }
     Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archive = [System.IO.Compression.ZipFile]::OpenRead($zip)
     try {
-        $entryNames = @($archive.Entries | ForEach-Object { $_.FullName })
-        if ('manifest.json' -notin $entryNames) {
-            throw 'Archive lacks root manifest.json.'
+        $entryNames = [System.Collections.Generic.HashSet[string]]::new(
+            [System.StringComparer]::Ordinal)
+        $archiveEntries = @{}
+        foreach ($entry in $archive.Entries) {
+            $name = [string]$entry.FullName
+            if ($name.Contains('\') -or -not $entryNames.Add($name)) {
+                throw "Invalid ZIP entry name or duplicate: $name"
+            }
+            $archiveEntries[$name] = $entry
+        }
+        if (-not $entryNames.Contains('manifest.json')) {
+            throw 'Archive lacks exact root manifest.json.'
+        }
+        if ($entryNames.Count -ne (@($fileRows).Count + 1)) {
+            throw "Archive count mismatch: entries=$($entryNames.Count) manifest=$(@($fileRows).Count)"
         }
         foreach ($row in $fileRows) {
-            if ($row.Path -notin $entryNames) {
-                throw "Archive missing manifested file: $($row.Path)"
+            $name = [string]$row.Path
+            if (-not $entryNames.Contains($name)) {
+                $found = @($entryNames | Select-Object -First 5) -join '; '
+                throw "Archive missing exact manifested file: $name. Sample ZIP entries: $found"
+            }
+            if ([long]$archiveEntries[$name].Length -ne [long]$row.Bytes) {
+                throw "Archive entry length mismatch: $name"
             }
         }
+        Write-Host "[ZIP] Verified $($entryNames.Count) exact entry paths and lengths."
     } finally { $archive.Dispose() }
     $zipHash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
     $digestPath = $zip + '.sha256'

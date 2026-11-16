@@ -66,6 +66,23 @@ class GuiPreviewInstallerDelivery(unittest.TestCase):
             self.assertIn(token, workflow)
         self.assertNotIn("release create", workflow)
 
+    def test_offline_zip_builder_never_uses_implicit_windows_zip_entry_names(self):
+        builder = (TOOLS / "Build-TJRemoteAccess-Preview-OfflinePackage.ps1").read_text(
+            encoding="utf-8-sig")
+        writer = (TOOLS / "New-TJRemoteAccess-PreviewZip.ps1").read_text(
+            encoding="utf-8-sig")
+        powershell_tests = (ROOT / "tests/preview_powershell_parse_tests.cs").read_text(
+            encoding="utf-8-sig")
+        xunit_project = (ROOT / "tests/TJ.RemoteAccess.Preview.Tests.csproj").read_text(
+            encoding="utf-8-sig")
+        self.assertIn("New-TJRemoteAccess-PreviewZip.ps1", builder)
+        self.assertNotIn("    Compress-Archive -Path ", builder)
+        self.assertIn("CreateEntry(", writer)
+        self.assertIn(".Replace('\\', '/')", writer)
+        self.assertIn("entryNames.Contains($name)", builder)
+        self.assertIn("New-TJRemoteAccess-PreviewZip.ps1", powershell_tests)
+        self.assertIn("preview_offline_builder_end_to_end_tests.cs", xunit_project)
+
     def test_original_offline_script_now_has_streaming_progress(self):
         original = (TOOLS / "Install-TJRemoteAccess-Preview-Offline.ps1").read_text(
             encoding="utf-8-sig")
