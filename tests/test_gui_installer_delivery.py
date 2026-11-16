@@ -56,7 +56,7 @@ class GuiPreviewInstallerDelivery(unittest.TestCase):
             encoding="utf-8-sig")
         for token in ("0.5.3-preview", "self-contained true", "PublishSingleFile=true",
                       "IncludeNativeLibrariesForSelfExtract=true",
-                      "Get-FileHash", ".sha256", "Build-TJRemoteAccess-Preview-OfflinePackage",
+                      "Get-TJRemoteAccessFileSha256", ".sha256", "Build-TJRemoteAccess-Preview-OfflinePackage",
                       "LICENSE", "source"):
             if token == "source": continue
             self.assertIn(token, script)
@@ -65,6 +65,8 @@ class GuiPreviewInstallerDelivery(unittest.TestCase):
                       "Build-TJRemoteAccess-Preview-GuiPackage.ps1", "dotnet test"):
             self.assertIn(token, workflow)
         self.assertNotIn("release create", workflow)
+        self.assertNotIn("(Get-FileHash -", script)
+        self.assertIn("Get-TJRemoteAccessFileSha256.ps1", script)
 
     def test_offline_zip_builder_never_uses_implicit_windows_zip_entry_names(self):
         builder = (TOOLS / "Build-TJRemoteAccess-Preview-OfflinePackage.ps1").read_text(
@@ -82,6 +84,32 @@ class GuiPreviewInstallerDelivery(unittest.TestCase):
         self.assertIn("entryNames.Contains($name)", builder)
         self.assertIn("New-TJRemoteAccess-PreviewZip.ps1", powershell_tests)
         self.assertIn("preview_offline_builder_end_to_end_tests.cs", xunit_project)
+
+    def test_preview_ci_uses_dotnet_hashing_without_get_filehash_cmdlet(self):
+        helper = (TOOLS / "Get-TJRemoteAccessFileSha256.ps1").read_text(
+            encoding="utf-8-sig")
+        self.assertIn("System.Security.Cryptography.SHA256", helper)
+        self.assertIn("ComputeHash($stream)", helper)
+        self.assertIn("finally", helper)
+        for file in (
+            "Build-TJRemoteAccess-Preview-OfflinePackage.ps1",
+            "Build-TJRemoteAccess-Preview-GuiPackage.ps1",
+            "Install-TJRemoteAccess-Preview.ps1",
+            "Install-TJRemoteAccess-Preview-Offline.ps1",
+        ):
+            script = (TOOLS / file).read_text(encoding="utf-8-sig")
+            self.assertIn("Get-TJRemoteAccessFileSha256.ps1", script, file)
+            self.assertIn("Get-TJRemoteAccessFileSha256 -LiteralPath", script, file)
+            self.assertNotIn("(Get-FileHash -LiteralPath", script, file)
+        gui = (TOOLS / "Build-TJRemoteAccess-Preview-GuiPackage.ps1").read_text(
+            encoding="utf-8-sig")
+        self.assertNotIn("    Compress-Archive ", gui)
+        self.assertIn("New-TJRemoteAccess-PreviewZip.ps1", gui)
+        offline = (TOOLS / "Build-TJRemoteAccess-Preview-OfflinePackage.ps1").read_text(
+            encoding="utf-8-sig")
+        self.assertIn("'Get-TJRemoteAccessFileSha256.ps1'", offline)
+        installer = (SRC / "PreviewInstallerCore.cs").read_text(encoding="utf-8-sig")
+        self.assertIn('"Get-TJRemoteAccessFileSha256.ps1"', installer)
 
     def test_original_offline_script_now_has_streaming_progress(self):
         original = (TOOLS / "Install-TJRemoteAccess-Preview-Offline.ps1").read_text(

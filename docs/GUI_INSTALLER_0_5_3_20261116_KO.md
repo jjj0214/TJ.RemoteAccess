@@ -102,6 +102,28 @@ git pull --ff-only origin feature/chatgpt-m2-engine-foundation
 
 설치는 **GitHub Actions의 새로운 성공한 Run에서 GUI Installer 아티팩트**를 다운로드한 뒤 진행한다. 실패한 과거 Actions 아티팩트를 재사용하지 않는다.
 
+## GitHub Actions Get-FileHash 명령 누락 오류 수정 (2026-11-16)
+
+GitHub Actions의 Preview xUnit 통합 테스트에서 다음 오류가 발생했다.
+
+```text
+ForEach-Object: The term 'Get-FileHash' is not recognized ...
+Build-TJRemoteAccess-Preview-OfflinePackage.ps1:77
+```
+
+실패 지점은 **패키지의 매니페스트 파일별 SHA-256 계산 단계**이다. ZIP 경로 문제와는 별개이며, 실제 Runner에 `Get-FileHash` 명령이 없었던 이유(모듈 로딩/환경 설정 등)는 제공된 로그만으로 확정할 수 없다.
+
+수정 사항:
+
+- `tools/Get-TJRemoteAccessFileSha256.ps1`: `SHA256.Create().ComputeHash(FileStream)`로 대체, 원본 파일을 읽기 전용으로 열어 해시를 계산하고 스트림/알고리즘을 항상 해제한다.
+- `Build-TJRemoteAccess-Preview-OfflinePackage.ps1`, `Build-TJRemoteAccess-Preview-GuiPackage.ps1`, `Install-TJRemoteAccess-Preview.ps1`, `Install-TJRemoteAccess-Preview-Offline.ps1`에서 `Get-FileHash` 호출 제거. 검증은 기존과 동일하게 SHA-256 그대로 수행한다.
+- 설치 ZIP에는 해시 보조 스크립트를 포함하고, 설치기의 ZIP 허용 목록에도 정확히 등록해 전체 ZIP 검증 정책을 유지한다.
+- GUI 설치 ZIP 생성에도 `Compress-Archive` 대신 테스트한 명시적 `ZipArchive` 생성기를 사용한다. Actions에서는 다운로드 아티팩트 추출에도 `.NET ZipFile`을 사용한다.
+- 통합 테스트는 **`Get-FileHash` 함수를 강제로 오류 처리하는 Windows PowerShell**에서 실제 빌더를 실행하고, 매니페스트·소스 ZIP·개별 파일 SHA-256·최종 해시를 모두 확인한다.
+- 정적 테스트는 향후 Preview 빌더에 해당 명령이 다시 도입되지 않도록 검사한다.
+
+**검증 범위:** Windows 개발 PC에서 Cmdlet 부재 상황을 재현한 실제 오프라인 빌더 통합 테스트를 통과했다. 그러나 GitHub Actions 최신 Run에서 실제 self-contained GUI 빌드·업로드 성공까지 확인해야 완전 해결로 판정할 수 있다.
+
 ## 개발자/CI 패키지 생성
 
 테스트 완료 후 **깨끗한 Git HEAD**에서만:

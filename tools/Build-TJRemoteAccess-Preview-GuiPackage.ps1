@@ -17,6 +17,7 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Get-TJRemoteAccessFileSha256.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $changes = @(& git -C $root status --porcelain --untracked-files=normal)
 if ($LASTEXITCODE -ne 0 -or @($changes | Where-Object { $_ }).Count -ne 0) {
@@ -44,7 +45,7 @@ if ($shaLine.Count -ne 2 -or $shaLine[0] -notmatch '^[0-9A-Fa-f]{64}$' -or
     throw 'Offline SHA-256 sidecar is malformed.'
 }
 Write-Host '[2/5] Verifying offline ZIP SHA-256 (may be slow for large source bundle)...'
-$actual = (Get-FileHash -LiteralPath $offline -Algorithm SHA256).Hash
+$actual = Get-TJRemoteAccessFileSha256 -LiteralPath $offline
 if (-not [string]::Equals($actual, $shaLine[0], [System.StringComparison]::OrdinalIgnoreCase)) {
     throw 'Offline package digest mismatch. Build aborted.'
 }
@@ -83,10 +84,16 @@ Windows 10/11 x64; Windows Service/UAC/Winlogon control is not installed.
 '@
     [System.IO.File]::WriteAllText((Join-Path $stage 'README_INSTALL.txt'),
         $instructions, [System.Text.UTF8Encoding]::new($false))
-    Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $bundle -ErrorAction Stop
-    if (-not (Test-Path -LiteralPath $bundle -PathType Leaf)) { throw 'GUI bundle was not created.' }
+    # Avoid Compress-Archive/PowerShell.Archive module dependency on CI.
+    # Use the same explicit forward-slash ZIP writer verified by xUnit.
+    & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (
+        Join-Path $PSScriptRoot 'New-TJRemoteAccess-PreviewZip.ps1'
+    ) -StageDirectory $stage -DestinationZip $bundle
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $bundle -PathType Leaf)) {
+        throw 'GUI installer bundle ZIP creation failed.'
+    }
     Write-Host '[5/5] Computing installer ZIP SHA-256...'
-    $finalSha = (Get-FileHash -LiteralPath $bundle -Algorithm SHA256).Hash
+    $finalSha = Get-TJRemoteAccessFileSha256 -LiteralPath $bundle
     [System.IO.File]::WriteAllText(($bundle + '.sha256'),
         "$finalSha  $(Split-Path -Leaf $bundle)" + [Environment]::NewLine,
         [System.Text.UTF8Encoding]::new($false))

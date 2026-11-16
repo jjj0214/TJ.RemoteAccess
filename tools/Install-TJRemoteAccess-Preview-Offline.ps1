@@ -20,6 +20,7 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Get-TJRemoteAccessFileSha256.ps1')
 if ([string]::IsNullOrWhiteSpace($PackagePath) -or
     $ExpectedPackageSha256 -notmatch '^[0-9a-fA-F]{64}\z') {
     throw 'Missing -PackagePath <ZIP> and -ExpectedPackageSha256 <64-char hash>. Prefer TJ.RemoteAccess.Installer.exe GUI.'
@@ -30,7 +31,7 @@ if ([System.IO.Path]::GetExtension($archivePath) -ine '.zip') {
 }
 Write-Host "[1/4] Verifying offline ZIP SHA-256: $archivePath"
 Write-Host 'Large offline packages include GPL sources; verification may read hundreds of MB.'
-$actualPackageHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash
+$actualPackageHash = Get-TJRemoteAccessFileSha256 -LiteralPath $archivePath
 Write-Host '[1/4] Package SHA-256 verified.'
 if (-not [string]::Equals($actualPackageHash, $ExpectedPackageSha256,
                          [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -56,6 +57,7 @@ $allowedRoot = @('LICENSE', 'Install-TJRemoteAccess-Preview-Offline.ps1',
                  'Uninstall-TJRemoteAccess-Preview.ps1', 'Test-TJRemoteAccess-Preview.ps1',
                  'Measure-TJRemoteAccess-Preview.ps1',
                  'Set-TJRemoteAccess-Preview-Startup.ps1',
+                 'Get-TJRemoteAccessFileSha256.ps1',
                  'manifest.json', 'source.zip')
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem

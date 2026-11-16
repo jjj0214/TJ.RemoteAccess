@@ -14,6 +14,7 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Get-TJRemoteAccessFileSha256.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $changes = @(& git -C $root status --porcelain --untracked-files=normal)
 if ($LASTEXITCODE -ne 0 -or @($changes | Where-Object { $_ }).Count -ne 0) {
@@ -58,7 +59,8 @@ try {
                           'Uninstall-TJRemoteAccess-Preview.ps1',
                           'Test-TJRemoteAccess-Preview.ps1',
                           'Measure-TJRemoteAccess-Preview.ps1',
-                          'Set-TJRemoteAccess-Preview-Startup.ps1')) {
+                          'Set-TJRemoteAccess-Preview-Startup.ps1',
+                           'Get-TJRemoteAccessFileSha256.ps1')) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $script) -Destination (
             Join-Path $stage $script
         ) -ErrorAction Stop
@@ -79,7 +81,7 @@ try {
                 [pscustomobject]@{
                     Path = $relative
                     Bytes = [long]$_.Length
-                    Sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+                    Sha256 = Get-TJRemoteAccessFileSha256 -LiteralPath $_.FullName
                 }
             }
     )
@@ -140,7 +142,7 @@ try {
         }
         Write-Host "[ZIP] Verified $($entryNames.Count) exact entry paths and lengths."
     } finally { $archive.Dispose() }
-    $zipHash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
+    $zipHash = Get-TJRemoteAccessFileSha256 -LiteralPath $zip
     $digestPath = $zip + '.sha256'
     [System.IO.File]::WriteAllText($digestPath,
         "$zipHash  $(Split-Path -Leaf $zip)" + [Environment]::NewLine,

@@ -58,8 +58,16 @@ jobs:
       - name: Stage one-level installer download for users
         shell: pwsh
         run: |
-          Expand-Archive -LiteralPath .\out\packages\TJ.RemoteAccess-0.5.3-preview-GUI-Installer-win-x64.zip -DestinationPath .\out\packages\gui-installer-download -Force
-          if (-not (Test-Path .\out\packages\gui-installer-download\TJ.RemoteAccess.Installer.exe)) { throw 'Installer.exe missing after extracting GUI bundle.' }
+          $archive = Join-Path $PWD 'out\packages\TJ.RemoteAccess-0.5.3-preview-GUI-Installer-win-x64.zip'
+          $destination = Join-Path $PWD 'out\packages\gui-installer-download'
+          [System.IO.Directory]::CreateDirectory($destination) | Out-Null
+          [System.IO.Compression.ZipFile]::ExtractToDirectory($archive, $destination)
+          if (-not [System.IO.File]::Exists((Join-Path $destination 'TJ.RemoteAccess.Installer.exe'))) {
+            throw 'Installer.exe missing after extracting GUI bundle.'
+          }
+          if (-not [System.IO.File]::Exists((Join-Path $destination 'TJ.RemoteAccess-0.5.3-preview-win-x64.zip.sha256'))) {
+            throw 'SHA-256 sidecar missing from GUI installer download.'
+          }
 
       - name: Upload unsigned double-click installer package
         uses: actions/upload-artifact@v4

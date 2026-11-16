@@ -61,7 +61,8 @@ public sealed class PreviewOfflineBuilderEndToEndTests
                 "Uninstall-TJRemoteAccess-Preview.ps1",
                 "Test-TJRemoteAccess-Preview.ps1",
                 "Measure-TJRemoteAccess-Preview.ps1",
-                "Set-TJRemoteAccess-Preview-Startup.ps1"
+                "Set-TJRemoteAccess-Preview-Startup.ps1",
+                "Get-TJRemoteAccessFileSha256.ps1"
             }) File.Copy(Path.Combine(sourceTools, file), Path.Combine(tools, file));
             File.WriteAllText(Path.Combine(fixture, "LICENSE"), "Test-only GPL license stub");
             File.WriteAllText(Path.Combine(fixture, ".gitignore"), "out/\n");
@@ -82,12 +83,19 @@ public sealed class PreviewOfflineBuilderEndToEndTests
                 File.WriteAllText(Path.Combine(dir, "metadata.txt"), "Data " + part);
             }
 
+            // Reproduce the GitHub runner regression: Get-FileHash is
+            // deliberately unavailable in the shell running the REAL builder.
+            // The portable SHA-256 helper must work without that cmdlet.
+            string harness = Path.Combine(fixture, "out", "without-get-filehash.ps1");
+            string builder = Path.Combine(tools,
+                "Build-TJRemoteAccess-Preview-OfflinePackage.ps1")
+                .Replace("'", "''");
+            File.WriteAllText(harness,
+                "function global:Get-FileHash { throw 'Get-FileHash disabled by CI regression test' }\n" +
+                "& '" + builder + "' -Version '0.5.3-preview' -SkipBuild\n");
             string stdout = await RunAsync("powershell.exe", [
                 "-NoLogo", "-NoProfile", "-NonInteractive",
-                "-ExecutionPolicy", "Bypass",
-                "-File", Path.Combine(tools,
-                    "Build-TJRemoteAccess-Preview-OfflinePackage.ps1"),
-                "-Version", "0.5.3-preview", "-SkipBuild"
+                "-ExecutionPolicy", "Bypass", "-File", harness
             ], token);
             Assert.Contains("OFFLINE PACKAGE BUILT", stdout);
             string zipPath = Path.Combine(fixture, "out", "packages",

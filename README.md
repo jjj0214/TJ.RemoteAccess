@@ -59,7 +59,10 @@ for concrete implementation blockers. The static audit never approves deployment
   `Compress-Archive` file names). Windows integration tests run the exact
   builder on a disposable Git repository and verify each ZIP manifest name,
   size and SHA-256 to prevent the previously reported
-  `Archive missing manifested file` regression.
+  `Archive missing manifested file` regression. The GUI/offline
+  packaging path also avoids `Get-FileHash`: a .NET SHA-256 file-stream
+  helper is tested with `Get-FileHash` deliberately unavailable, to
+  prevent the GitHub Windows runner command-not-found regression.
   Build artifact is produced in GitHub Actions from
   `tools/Build-TJRemoteAccess-Preview-GuiPackage.ps1`;
   this is an **unsigned EXE setup window, not an MSI**.

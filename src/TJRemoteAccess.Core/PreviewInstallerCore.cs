@@ -55,7 +55,8 @@ internal sealed class PreviewPackageInstaller
         "Uninstall-TJRemoteAccess-Preview.ps1",
         "Test-TJRemoteAccess-Preview.ps1",
         "Measure-TJRemoteAccess-Preview.ps1",
-        "Set-TJRemoteAccess-Preview-Startup.ps1"
+        "Set-TJRemoteAccess-Preview-Startup.ps1",
+        "Get-TJRemoteAccessFileSha256.ps1"
     };
 
     private readonly string _installRoot;

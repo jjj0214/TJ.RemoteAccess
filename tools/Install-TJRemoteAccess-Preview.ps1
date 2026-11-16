@@ -16,6 +16,7 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Get-TJRemoteAccessFileSha256.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $source = Join-Path $root 'src\TJRemoteAccess.Core'
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
@@ -59,7 +60,7 @@ try {
         if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
             throw "Published executable missing: $exe"
         }
-        $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
+        $hash = Get-TJRemoteAccessFileSha256 -LiteralPath $exe
         Write-Host "PUBLISH PASS $component SHA256=$hash"
     }
 
