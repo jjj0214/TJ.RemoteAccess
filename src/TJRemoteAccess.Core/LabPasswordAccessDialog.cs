@@ -46,10 +46,17 @@ internal static class LabPasswordAccessDialog
         Row("Password privileges", controller, 3);
         Row("Server TLS pin", pinBox, 4);
         var info = new Label {
-            Dock = DockStyle.Fill, Text =
-                $"Password TLS port: {settings.Port + 1} (certificate port: {settings.Port}).\n" +
-                "Use Viewer > Add password server and copy this SHA-256 pin using a trusted channel.\n" +
-                "No password is stored in the Viewer; no raw/unencrypted password listener exists."
+            Dock = DockStyle.Fill,
+#if TJRA_STANDALONE_PREVIEW
+            Text = $"Password TLS port: {settings.Port + 1} (certificate port: {settings.Port}).\n" +
+                   "Viewer > Quick connect: enter IP + password. No Viewer certificate required.\n" +
+                   "FIRST connection: verify the shown SHA-256 against 'Copy Server pin'.\n" +
+                   "TLS always encrypted. No password is saved in the Viewer."
+#else
+            Text = $"Password TLS port: {settings.Port + 1} (certificate port: {settings.Port}).\n" +
+                   "Use Viewer > Add password server and copy this SHA-256 pin using a trusted channel.\n" +
+                   "No password is stored in the Viewer; no raw/unencrypted password listener exists."
+#endif
         };
         layout.Controls.Add(info, 0, 5);
         layout.SetColumnSpan(info, 2);
@@ -72,8 +79,14 @@ internal static class LabPasswordAccessDialog
             try
             {
                 access.Disable();
+#if TJRA_STANDALONE_PREVIEW
+                MessageBox.Show(form,
+                    "Password access disabled. Active Server will restart and revoke existing sessions.",
+                    "Password disabled");
+#else
                 MessageBox.Show(form, "Password access disabled. Restart Server to close its listener.",
                     "Password disabled");
+#endif
                 form.Close();
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
@@ -87,10 +100,18 @@ internal static class LabPasswordAccessDialog
                 if (password.Text != again.Text)
                     throw new InvalidDataException("Passwords do not match.");
                 access.Configure(password.Text, controller.Checked);
+#if TJRA_STANDALONE_PREVIEW
+                MessageBox.Show(form,
+                    "Password verifier saved; plaintext password was NOT stored.\n" +
+                    "Active Server will restart TLS listeners and disconnect existing sessions.\n" +
+                    "Viewer: Quick connect (IP + password) on port " + (settings.Port + 1) + ".",
+                    "Password access configured");
+#else
                 MessageBox.Show(form,
                     "Password verifier saved; plaintext password was NOT stored.\n" +
                     "Stop and Start the Lab Server to activate the password listener.",
                     "Password access configured");
+#endif
                 form.Close();
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException

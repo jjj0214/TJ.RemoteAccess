@@ -4,15 +4,15 @@
 
 최종 목표: TightVNC의 실행 파일과 서비스가 없어도 독립 TJ.RemoteAccess Server, Viewer, Setup, Windows ControlService 및 SessionAgent만으로 Windows PC의 원격 화면과 입력, 인증, 다중 접속, 시작/중단, 설치/업데이트/원복을 제공하는 것.
 
-**현재는 0.5.0-preview 개발 빌드로, 완성된 TightVNC 대체 제품이 아니다.** 아래 실험 외 현장/고객사에서는 적용하지 않는다. 제품에 GPL 대응 소스/라이선스를 포함하지만 코드 서명 및 정식 MSI는 남았다.
+**현재는 0.5.2-preview 개발 빌드로, 완성된 TightVNC 대체 제품이 아니다.** 아래 실험 외 현장/고객사에서는 적용하지 않는다. 제품에 GPL 대응 소스/라이선스를 포함하지만 코드 서명 및 정식 MSI는 남았다.
 
 이 Preview의 기능 경계:
 
 | 항목 | 현재 기능 | 검증 상태 |
 |---|---|---|
-| 독립 Server, Viewer, Setup | .NET 9 앱호스트, TightVNC API/설치 의존 없음 | 0.5.0-preview Release 컴파일/자동 테스트, 실제 2 PC Preview 수용 미실행 |
+| 독립 Server, Viewer, Setup | .NET 9 앱호스트, TightVNC API/설치 의존 없음 | 0.5.2-preview Release 컴파일/자동 테스트, 실제 2 PC Preview 수용 미실행 |
 | 사용자 세션 화면/입력 | 인증된 TLS Server, Viewer 최대 3 / Controller 1 | 기존 M2 Lab 사용자 수용을 근거로 기능 유지; 별도 Preview 새 인증서 2 PC 재검증 필요 |
-| 인증 및 설정 | 프로필+pin, 개인 Viewer 인증서, 선택적 TLS password | 보안/프로토콜 테스트; 기존 Lab과 다른 저장소, 포트 사용 |
+| 인증 및 설정 | 기존 Viewer PFX 인증서 모드 + IP/Password 간편 접속(첫 서버 지문 검증 후 자동 저장) | TLS 루프백·프로필·부정 테스트, 실제 2 PC GUI 최종 검증 필요 |
 | 서비스 기반 감독 | LocalSystem ControlService ↔ 사용자 Agent 보안 IPC, 사용자 소유의 visible Server | 코드 + xUnit/독립 일반 사용자 프로세스 IPC 테스트; 실제 Service→Agent→GUI 실기 미검증 |
 | 서비스 재시작 | Auto 서비스, 로그인·잠금 해제 시 새 Agent, 잠금·로그오프 시 종료 | 이벤트 정책 테스트, Windows 실제 SCM/재부팅 미검증 |
 | Winlogon/잠금/UAC 화면 원격제어 | **미지원**; 인증된 사용자 `Default` 데스크톱만 허용 | 보안 데스크톱 거부 정책만 테스트 |
@@ -57,7 +57,7 @@ Server PC **최초 1회**(기존 `%LOCALAPPDATA%\TJ.RemoteAccess\server.json`이
 
 - PFX와 별도로 출력되는 PFX 암호는 안전하게 관리하고, 인증된 수단으로 Viewer PC에 전달한 뒤 임시 PFX 삭제.
 - Server `%LOCALAPPDATA%\TJ.RemoteAccess\server.json`의 `ListenAddress`를 테스트 LAN의 IP로 변경. 같은 PC만 테스트한다면 127.0.0.1 유지.
-- 기본 인증서 포트 15544, 별도 사용자 암호 사용 정책은 기존 설계를 변경하지 않았다.
+- 기본 인증서 포트 15544, 별도 IP+비밀번호 간편 TLS 포트 15545(기본 비활성). 실제 사용법: `docs/QUICK_PASSWORD_ACCESS_0_5_2_20261116_KO.md`. Viewer 인증서 없이 첫 공개 서버 지문 검증 후 자동 저장.
 - Server(사용자 로그인 완료 후):
 
 ```powershell
@@ -71,7 +71,30 @@ Server PC **최초 1회**(기존 `%LOCALAPPDATA%\TJ.RemoteAccess\server.json`이
 & "$env:LOCALAPPDATA\Programs\TJ.RemoteAccess\Viewer\TJ.RemoteAccess.Viewer.exe"
 ```
 
-Viewer에서 등록 프로필 선택 후 Connect. 운영 PC의 방화벽을 설치기에서 자동 개방하지 않으므로 격리 테스트 네트워크에서 Viewer IP만 수동 허용한다. **기존 Lab PFX를 독립 Preview로 복사하지 말고 새 프로필을 사용**.
+기존 Viewer 인증서 모드라면 등록 프로필 선택 후 Connect. 간편 Password 모드라면 Viewer의 **Quick connect (IP + password)**에서 IP/15545/비밀번호를 입력하고 최초에만 Server 트레이에 표시되는 SHA-256 지문을 비교한다. 운영 PC의 방화벽을 설치기에서 자동 개방하지 않으므로 격리 테스트 네트워크에서 Viewer IP만 수동 허용한다. **기존 Lab PFX를 독립 Preview로 복사하지 말고 새 프로필을 사용**.
+
+### 트레이 아이콘 사용법 (0.5.1 이후)
+
+- `TJ.RemoteAccess.Server.exe`의 X 버튼과 최소화 버튼은 **창만 트레이로 숨긴다**. 원격 Server는 계속 실행된다. 창을 다시 보려면 TJ 트레이 아이콘을 더블클릭하거나 우클릭 → `Open Server`.
+- 아이콘 색상: 회색(중지), 파란색(TLS 접속 대기), 초록색(Viewer 연결). 메뉴에 Viewer 0~3명과 Controller 0~1명 표시.
+- 트레이 우클릭 메뉴: `Start listening`, `Stop listening`, `Client access...`, `Password access...`, `Allow Windows service supervision`, `Exit TJ.RemoteAccess`. 접속자가 있을 때 종료는 확인 창을 표시한다.
+- 같은 Windows 세션에서 Server 실행 파일을 두 번 실행해도 두 번째 트레이 아이콘을 만들지 않고 기존 창을 복원한다. 서비스 감독으로 시작한 자식 Server도 같은 규칙을 따른다.
+- 트레이 `Allow Windows service supervision`은 **해당 사용자 명시적 동의**만 관리한다. 관리자 설치 폴더의 별도 정책이 없으면 Windows Service는 Server를 시작할 수 없다. 동의 취소 시 서비스 Agent가 자식 Server를 종료한다.
+- `--auto-start` 옵션 또는 명시적으로 등록한 로그온 작업으로 실행하면 트레이로 숨겨진 상태에서 서버 접속 대기가 시작된다.
+- **업데이트 전:** 트레이 아이콘 우클릭 → `Exit TJ.RemoteAccess`로 프로세스를 완전히 종료해야 설치 도구가 파일을 안전하게 교체한다. X 버튼은 종료가 아니다.
+- 잠금, 로그오프, UAC 보안 데스크톱에서는 원격 화면/입력을 즉시 차단한다. 잠금 이전에 접속 대기 중이었다면 잠금 해제 후 정상 `Default` 데스크톱이 확인된 경우(최대 10초) 자동 재시작을 시도한다. **명시적 중지, 로그오프, 세션 연결 해제 시에는 자동 복구하지 않는다.**
+
+### 270 PPM / 다중 Viewer 측정 (읽기 전용)
+
+```powershell
+# 2분 기본 샘플. 서버 PC에서 0명/1명/3명 Viewer 조건별 비교
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Measure-TJRemoteAccess-Preview.ps1 -Target Server -DurationSeconds 120 -IntervalSeconds 5 -Label "3 Viewer" -SummaryOnly
+
+# 장시간 메모리/핸들/GDI 추세. 테스트 PC의 서버가 실행 중일 때만
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Measure-TJRemoteAccess-Preview.ps1 -Target Server -DurationSeconds 3600 -IntervalSeconds 30 -SummaryOnly
+```
+
+측정 결과는 CPU/메모리/핸들/스레드/GDI/USER 객체 추세만 제공한다. **검사기 270 PPM Tact 영향, GPU 자원 사용량 또는 원격 화면 지연을 직접 증명하지 않으므로** 검사 프로그램 데이터와 별도로 비교해야 한다.
 
 사용자 로그온 후 자동 시작만 원하면 Server 설치 및 최초 init 완료 후:
 
@@ -85,7 +108,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Set-TJRemoteAccess-P
 
 **현재 설치/롤백 스크립트는 PowerShell 구문 파서 및 Python 계약만 검증했다. 실제 실행 검증 전이므로 스냅샷 복원 가능한 폐기형 Win10/11 x64 VM 전용이다.**
 
-1. 개발 VM에서 소스 커밋 후 clean HEAD 확인, `tools/Build-TJRemoteAccess-ServicePreviewPackage.ps1`을 PowerShell에서 실행. 생성 `out\packages\TJ.RemoteAccess.ServicePreview-0.5.0-preview-win-x64.zip`과 out-of-band SHA-256을 별도로 검증.
+1. 개발 VM에서 소스 커밋 후 clean HEAD 확인, `tools/Build-TJRemoteAccess-ServicePreviewPackage.ps1`을 PowerShell에서 실행. 생성 `out\packages\TJ.RemoteAccess.ServicePreview-0.5.2-preview-win-x64.zip`과 out-of-band SHA-256을 별도로 검증.
 2. **관리자 권한으로** 격리 VM에 ZIP 전달 및 아래 설치:
 
 ```powershell

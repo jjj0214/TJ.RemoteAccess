@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsTestProject>true</IsTestProject>
@@ -18,6 +19,13 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="preview_isolation_tests.cs" />
+    <Compile Include="preview_tray_tests.cs" />
+    <Compile Include="preview_quick_password_tests.cs" />
+    <Compile Include="..\\src\\TJRemoteAccess.Core\\LabViewerProfiles.cs" />
+    <Compile Include="..\\src\\TJRemoteAccess.Core\\LabProtocol.cs" />
+    <Compile Include="..\\src\\TJRemoteAccess.Core\\LabQuickPasswordTrust.cs" />
+    <Compile Include="..\\src\\TJRemoteAccess.Core\\LabPasswordAccess.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\LabServerTray.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\LabCertificates.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\M3DesktopEnrollment.cs" />
   </ItemGroup>

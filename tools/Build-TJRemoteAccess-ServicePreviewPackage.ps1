@@ -10,7 +10,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^[A-Za-z0-9.+-]{1,40}$')]
-    [string]$Version = '0.5.0-preview'
+    [string]$Version = '0.5.2-preview'
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -50,7 +50,8 @@ try {
     foreach ($script in @('Build-TJRemoteAccess-ServicePreviewPackage.ps1',
                           'Install-TJRemoteAccess-ServicePreview.ps1',
                           'Uninstall-TJRemoteAccess-ServicePreview.ps1',
-                          'Test-TJRemoteAccess-ServicePreview.ps1')) {
+                          'Test-TJRemoteAccess-ServicePreview.ps1',
+                          'Measure-TJRemoteAccess-Preview.ps1')) {
         $tokens = $null
         $syntaxErrors = $null
         [System.Management.Automation.Language.Parser]::ParseFile(
@@ -79,7 +80,8 @@ try {
     Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination (Join-Path $payload 'LICENSE')
     foreach ($script in @('Install-TJRemoteAccess-ServicePreview.ps1',
                           'Uninstall-TJRemoteAccess-ServicePreview.ps1',
-                          'Test-TJRemoteAccess-ServicePreview.ps1')) {
+                          'Test-TJRemoteAccess-ServicePreview.ps1',
+                          'Measure-TJRemoteAccess-Preview.ps1')) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $script) -Destination (Join-Path $payload $script)
     }
     & git -C $root archive --format=zip "--output=$(Join-Path $payload 'source.zip')" HEAD

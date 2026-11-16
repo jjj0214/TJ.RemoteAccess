@@ -51,6 +51,7 @@
     <Compile Include="..\src\TJRemoteAccess.Core\LabProtocol.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\LabCertificates.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\LabViewerProfiles.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\LabQuickPasswordTrust.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\LabViewerLaunch.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\M3IpcProtocol.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\M3WindowsPipe.cs" />

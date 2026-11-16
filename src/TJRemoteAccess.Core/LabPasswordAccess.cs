@@ -58,6 +58,18 @@ internal sealed class LabPasswordAccess
         }
     }
 
+    // A changed password, control permission or listener-enabled flag must
+    // rebind BOTH TLS listeners. The previous clients must be disconnected
+    // rather than retaining stale authorization.
+    internal static bool NeedsListenerRestart(LabPasswordSettings previous,
+                                               LabPasswordSettings current) =>
+        previous.Enabled != current.Enabled ||
+        previous.CanControl != current.CanControl ||
+        !string.Equals(previous.VerifierBase64, current.VerifierBase64,
+                       StringComparison.Ordinal) ||
+        !string.Equals(previous.SaltBase64, current.SaltBase64,
+                       StringComparison.Ordinal);
+
     internal bool Verify(string candidate) => TryAuthenticate(candidate, out _);
 
     internal bool TryAuthenticate(string candidate, out LabPasswordSettings authorized)

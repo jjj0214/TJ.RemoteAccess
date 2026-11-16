@@ -14,6 +14,7 @@ public sealed class TJRemoteAccessPowerShellParseTests
     [InlineData("Test-TJRemoteAccess-Preview.ps1")]
     [InlineData("Uninstall-TJRemoteAccess-Preview.ps1")]
     [InlineData("Set-TJRemoteAccess-Preview-Startup.ps1")]
+    [InlineData("Measure-TJRemoteAccess-Preview.ps1")]
     [InlineData("Build-TJRemoteAccess-M3-LabPackage.ps1")]
     [InlineData("Install-TJRemoteAccess-M3-Lab.ps1")]
     [InlineData("Uninstall-TJRemoteAccess-M3-Lab.ps1")]

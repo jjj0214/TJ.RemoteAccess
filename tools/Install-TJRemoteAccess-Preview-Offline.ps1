@@ -38,7 +38,7 @@ $running = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
                          'TJ.RemoteAccess.Setup')
 })
 if ($running.Count -ne 0) {
-    throw 'Close all TJ.RemoteAccess Preview processes before updating.'
+    throw 'Close all TJ.RemoteAccess Preview processes before updating. Right-click the Server tray icon and select Exit TJ.RemoteAccess.'
 }
 $publishBase = Join-Path $env:LOCALAPPDATA 'Programs\TJ.RemoteAccess'
 New-Item -ItemType Directory -Path $publishBase -Force | Out-Null
@@ -47,6 +47,8 @@ $stageRoot = Join-Path $publishBase ('.stage-' + $batch)
 $installed = @()
 $allowedRoot = @('LICENSE', 'Install-TJRemoteAccess-Preview-Offline.ps1',
                  'Uninstall-TJRemoteAccess-Preview.ps1', 'Test-TJRemoteAccess-Preview.ps1',
+                 'Measure-TJRemoteAccess-Preview.ps1',
+                 'Set-TJRemoteAccess-Preview-Startup.ps1',
                  'manifest.json', 'source.zip')
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem

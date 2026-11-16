@@ -20,6 +20,41 @@ internal static class LabServerProgram
     private static void Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
+#if TJRA_STANDALONE_PREVIEW
+        // A per-session instance prevents duplicated notification icons,
+        // conflicting TLS listeners and unexpected duplicate desktop capture.
+        using var single = new Mutex(true, ServerTrayInstance.MutexName, out bool first);
+        if (!first)
+        {
+            try
+            {
+                using var restore = EventWaitHandle.OpenExisting(
+                    ServerTrayInstance.RestoreEventName);
+                restore.Set();
+            }
+            catch (Exception ex) when (ex is WaitHandleCannotBeOpenedException or
+                UnauthorizedAccessException or IOException)
+            {
+                MessageBox.Show("TJ.RemoteAccess Server is already running. " +
+                    "Open it from the notification area.", "TJ.RemoteAccess",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            return;
+        }
+        try
+        {
+            using var openEvent = new EventWaitHandle(
+                false, EventResetMode.AutoReset, ServerTrayInstance.RestoreEventName);
+            RunServer(args, openEvent);
+        }
+        finally { single.ReleaseMutex(); }
+#else
+        RunServer(args);
+#endif
+    }
+
+    private static void RunServer(string[] args, EventWaitHandle? openEvent = null)
+    {
         try
         {
             var settings = LabCertificates.LoadSettings<LabServerSettings>(LabCertificates.ServerFile);
@@ -38,7 +73,24 @@ internal static class LabServerProgram
             if (!LabCertificates.ValidatePinned(cert, LabCertificates.Hash(cert),
                                                 LabCertificates.ServerEku))
                 throw new InvalidDataException("Configured local server certificate invalid.");
-            Application.Run(new LabServerForm(settings, ip, cert, launch.AutoStart));
+            using var form = new LabServerForm(settings, ip, cert, launch.AutoStart);
+#if TJRA_STANDALONE_PREVIEW
+            if (openEvent is not null)
+            {
+                // A WinForms timer continues to tick while the window is hidden
+                // and restores it only on a local, same-session launch signal.
+                using var restorePoll = new System.Windows.Forms.Timer { Interval = 250 };
+                restorePoll.Tick += (_, _) => {
+                    if (!form.IsDisposed && openEvent.WaitOne(0))
+                        form.RestoreFromTray();
+                };
+                restorePoll.Start();
+                Application.Run(form);
+            }
+            else Application.Run(form);
+#else
+            Application.Run(form);
+#endif
         }
         catch (Exception ex)
         {
@@ -76,6 +128,13 @@ internal sealed class LabServerForm : Form
     private readonly HashSet<ushort> _pressedKeys = new();
     private byte _pressedMouse;
     private readonly SemaphoreSlim _handshakeLimit = new(4);
+#if TJRA_STANDALONE_PREVIEW
+    private readonly LabServerTray _tray;
+    private bool _serviceSupervisionEnabled;
+    private bool _resumeAfterUnlock;
+    private DateTime _resumeDeadlineUtc;
+    private readonly System.Windows.Forms.Timer _resumeTimer = new() { Interval = 500 };
+#endif
     private TcpListener? _listener;
     private TcpListener? _passwordListener;
     private CancellationTokenSource? _shutdown;
@@ -111,26 +170,74 @@ internal sealed class LabServerForm : Form
         Controls.Add(controls);
         _start.Click += (_, _) => StartServer();
         _stopButton.Click += (_, _) => StopServer();
-        _clientsButton.Click += (_, _) => {
-            using var dialog = new LabServerClientAccessForm(_clientRoster, _settings, _serverCert);
-            dialog.ShowDialog(this);
+        _clientsButton.Click += (_, _) => ShowClientAccess();
+        _passwordButton.Click += (_, _) => ShowPasswordAccess();
+#if TJRA_STANDALONE_PREVIEW
+        _serviceSupervisionEnabled =
+            TJ.RemoteAccess.M3.M3DesktopEnrollmentStore.IsEnabledForCurrentUser();
+        _tray = new LabServerTray(RestoreFromTray, StartServer, StopServer,
+                                  () => { RestoreFromTray(); ShowClientAccess(); },
+                                  () => { RestoreFromTray(); ShowPasswordAccess(); },
+                                  ToggleServiceSupervision, Close);
+        FormClosing += (_, e) => {
+            if (_tray.ShouldHideOnClose(e.CloseReason)) {
+                e.Cancel = true;
+                HideToTray();
+            }
+            else StopServer();
         };
-        _passwordButton.Click += (_, _) => LabPasswordAccessDialog.Show(this, _passwordAccess, _settings, _serverCert);
+        FormClosed += (_, _) => _tray.Dispose();
+        _resumeTimer.Tick += (_, _) => TryResumeAfterUnlock();
+        FormClosed += (_, _) => _resumeTimer.Dispose();
+        SizeChanged += (_, _) => {
+            if (WindowState == FormWindowState.Minimized) HideToTray();
+        };
+#else
         FormClosing += (_, _) => StopServer();
+#endif
         SystemEvents.SessionSwitch += OnWindowsSessionSwitch;
         FormClosed += (_, _) => SystemEvents.SessionSwitch -= OnWindowsSessionSwitch;
         FormClosed += (_, _) => _ = _audit.DisposeAsync();
         if (autoStart)
-            Shown += (_, _) => StartServer();
+            Shown += (_, _) => {
+                StartServer();
+#if TJRA_STANDALONE_PREVIEW
+                // Auto-started servers are deliberately visible in the tray;
+                // the session stays active without a taskbar window.
+                if (_listener is not null)
+                    BeginInvoke(new Action(() => HideToTray(showHint: false)));
+#endif
+            };
         UpdateSummary();
         Log("Interactive screen share only. Lock screen/UAC are NOT supported.");
         Log("Mutual TLS certificate access remains available; optional password TLS is disabled by default.");
     }
 
-    // Security boundary: stop accepting remote input/screen frames whenever
-    // Windows changes the interactive desktop. Never auto-restart on unlock.
+    // Security boundary: stop TLS, capture and input on desktop changes.
+    // Product Preview may resume ONLY a previously listening same-user Server
+    // after an explicit Windows unlock AND verified Default desktop.
     private void OnWindowsSessionSwitch(object sender, SessionSwitchEventArgs args)
     {
+#if TJRA_STANDALONE_PREVIEW
+        if (args.Reason == SessionSwitchReason.SessionUnlock)
+        {
+            if (IsDisposed || !IsHandleCreated) return;
+            void Resume()
+            {
+                if (IsDisposed || !_resumeAfterUnlock) return;
+                _resumeDeadlineUtc = DateTime.UtcNow.AddSeconds(10);
+                _resumeTimer.Start();
+                TryResumeAfterUnlock();
+            }
+            if (InvokeRequired)
+            {
+                try { BeginInvoke(new Action(Resume)); }
+                catch (InvalidOperationException) { }
+            }
+            else Resume();
+            return;
+        }
+#endif
         if (args.Reason is not (SessionSwitchReason.SessionLock or
             SessionSwitchReason.SessionLogoff or
             SessionSwitchReason.ConsoleDisconnect or
@@ -139,8 +246,25 @@ internal sealed class LabServerForm : Form
         if (IsDisposed || !IsHandleCreated) return;
         void Suspend()
         {
+#if TJRA_STANDALONE_PREVIEW
+            // Logoff, console switch or remote disconnect always invalidate a
+            // pending unlock resume, even if the listener was already stopped.
+            if (args.Reason != SessionSwitchReason.SessionLock)
+            {
+                _resumeAfterUnlock = false;
+                _resumeTimer.Stop();
+            }
+#endif
             if (IsDisposed || _listener is null) return;
             Log("Windows session changed (" + args.Reason + "); remote access stopped.");
+#if TJRA_STANDALONE_PREVIEW
+            if (args.Reason == SessionSwitchReason.SessionLock && _running)
+            {
+                _resumeAfterUnlock = true;
+                StopServerCore();
+                return;
+            }
+#endif
             StopServer();
         }
         if (InvokeRequired)
@@ -151,6 +275,126 @@ internal sealed class LabServerForm : Form
         else Suspend();
     }
 
+    private void ShowClientAccess()
+    {
+        using var dialog = new LabServerClientAccessForm(_clientRoster, _settings, _serverCert);
+        dialog.ShowDialog(this);
+    }
+
+    private void ShowPasswordAccess()
+    {
+#if TJRA_STANDALONE_PREVIEW
+        // Apply opt-in/password rotation without requiring the operator to
+        // hunt through the tray. Existing sessions are invalidated by a
+        // full stop/rebind; the TLS/password listeners never disagree.
+        var previous = _passwordAccess.Current();
+#endif
+        LabPasswordAccessDialog.Show(this, _passwordAccess, _settings, _serverCert);
+#if TJRA_STANDALONE_PREVIEW
+        var current = _passwordAccess.Current();
+        if (_listener is not null &&
+            LabPasswordAccess.NeedsListenerRestart(previous, current))
+        {
+            Log("Password access changed; restarting TLS listeners and disconnecting viewers.");
+            StopServer();
+            StartServer();
+        }
+#endif
+    }
+
+#if TJRA_STANDALONE_PREVIEW
+    private void ToggleServiceSupervision()
+    {
+        RestoreFromTray();
+        try
+        {
+            bool enrolled = TJ.RemoteAccess.M3.M3DesktopEnrollmentStore.IsEnabledForCurrentUser();
+            if (enrolled)
+            {
+                if (MessageBox.Show(this,
+                    "Disable Windows Service supervision for this user? A supervised " +
+                    "remote Server will be closed when the Agent checks enrollment.",
+                    "TJ.RemoteAccess", MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                    return;
+                TJ.RemoteAccess.M3.M3DesktopEnrollmentStore.DisableForCurrentUser();
+                _serviceSupervisionEnabled = false;
+                Log("Windows Service desktop supervision consent disabled.");
+            }
+            else
+            {
+                if (MessageBox.Show(this,
+                    "Allow the administrator-configured TJ.RemoteAccess Windows Service " +
+                    "to start this user's visible Server after sign-in? " +
+                    "A separate administrator policy is also required. " +
+                    "Locked and secure desktops remain blocked.",
+                    "TJ.RemoteAccess", MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                    return;
+                TJ.RemoteAccess.M3.M3DesktopEnrollmentStore.EnableForCurrentUser(true);
+                _serviceSupervisionEnabled = true;
+                Log("Windows Service desktop supervision consent enabled for current user.");
+            }
+            UpdateSummary();
+        }
+        catch (Exception ex) when (ex is AuthenticationException or InvalidDataException
+            or IOException or UnauthorizedAccessException or
+            System.Security.Cryptography.CryptographicException)
+        {
+            MessageBox.Show(this, ex.Message, "Service supervision setting",
+                            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void TryResumeAfterUnlock()
+    {
+        if (IsDisposed || !_resumeAfterUnlock)
+        {
+            _resumeTimer.Stop();
+            return;
+        }
+        if (_listener is not null)
+        {
+            _resumeAfterUnlock = false;
+            _resumeTimer.Stop();
+            return;
+        }
+        if (TJ.RemoteAccess.M3.M3InteractiveDesktopGuard.IsNormalInteractiveDesktop())
+        {
+            _resumeAfterUnlock = false;
+            _resumeTimer.Stop();
+            StartServer(); // Rebind only after unlock; never controls Winlogon/UAC.
+            if (_listener is not null)
+                Log("Interactive TLS Server resumed after Windows unlock.");
+            return;
+        }
+        if (DateTime.UtcNow >= _resumeDeadlineUtc)
+        {
+            _resumeAfterUnlock = false;
+            _resumeTimer.Stop();
+            Log("Automatic unlock resume skipped: normal desktop unavailable.");
+        }
+    }
+
+    private void HideToTray(bool showHint = true)
+    {
+        if (IsDisposed) return;
+        Hide();
+        ShowInTaskbar = false;
+        if (showHint) _tray.NotifyHidden();
+    }
+
+    internal void RestoreFromTray()
+    {
+        if (IsDisposed) return;
+        ShowInTaskbar = true;
+        if (WindowState == FormWindowState.Minimized)
+            WindowState = FormWindowState.Normal;
+        Show();
+        Activate();
+    }
+#endif
+
     private void UpdateSummary()
     {
         lock (_guard)
@@ -159,6 +403,12 @@ internal sealed class LabServerForm : Form
                 $"Viewers {_sessions.Count}/3  |  " +
                 $"Controller {(_controller is null ? "none" : "1")}  |  " +
                 $"Desktop {_desktop.Width} x {_desktop.Height}";
+#if TJRA_STANDALONE_PREVIEW
+            _tray?.Update(new ServerTraySnapshot(_running && _listener is not null,
+                                                  _sessions.Count,
+                                                  _controller is not null,
+                _serviceSupervisionEnabled));
+#endif
         }
     }
 
@@ -183,6 +433,11 @@ internal sealed class LabServerForm : Form
         if (_listener is not null) return;
         try
         {
+#if TJRA_STANDALONE_PREVIEW
+            if (!TJ.RemoteAccess.M3.M3InteractiveDesktopGuard.IsNormalInteractiveDesktop())
+                throw new AuthenticationException(
+                    "Remote access is available only on the signed-in Default desktop.");
+#endif
             _shutdown = new CancellationTokenSource();
             _listener = new TcpListener(_address, _settings.Port);
             _listener.Start(backlog: 6);
@@ -220,6 +475,17 @@ internal sealed class LabServerForm : Form
     }
 
     private void StopServer()
+    {
+#if TJRA_STANDALONE_PREVIEW
+        // Explicit stop, exit, logoff, or disconnect cancels any queued
+        // restart. Only SessionLock retains an unlock-resume intent.
+        _resumeAfterUnlock = false;
+        _resumeTimer.Stop();
+#endif
+        StopServerCore();
+    }
+
+    private void StopServerCore()
     {
         _shutdown?.Cancel();
         _listener?.Stop();
@@ -418,6 +684,13 @@ internal sealed class LabServerForm : Form
                             if (!_running || token.IsCancellationRequested ||
                                 _controller != session || !_sessions.Contains(session))
                                 continue;
+#if TJRA_STANDALONE_PREVIEW
+                            // FINAL sink check: UAC/Winlogon/locked desktop never
+                            // receives key or pointer input, even if a session
+                            // switch notification was lost or delayed.
+                            if (!TJ.RemoteAccess.M3.M3InteractiveDesktopGuard.IsNormalInteractiveDesktop())
+                                throw new AuthenticationException("Windows desktop is locked or protected.");
+#endif
                             if (packet.Type == LabMessage.Key) {
                                 var key = LabWire.ParseKey(packet.Payload);
                                 LabNativeInput.ApplyKey(_pressedKeys, key.Key, key.Pressed);
@@ -478,6 +751,10 @@ internal sealed class LabServerForm : Form
                 lock (_guard) { hasViewer = _running && _sessions.Count != 0; }
                 if (hasViewer)
                 {
+#if TJRA_STANDALONE_PREVIEW
+                    if (!TJ.RemoteAccess.M3.M3InteractiveDesktopGuard.IsNormalInteractiveDesktop())
+                        throw new AuthenticationException("Desktop became locked or protected.");
+#endif
                     var jpeg = CaptureJpeg(_desktop);
                     if (!token.IsCancellationRequested)
                         frames.Publish(jpeg);

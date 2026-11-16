@@ -119,6 +119,58 @@ internal sealed class LabViewerProfileStore
         });
     }
 
+    // Quick-connect trust is bound to a SPECIFIC endpoint. A server certificate
+    // stored for some other IP or port must never silently authorize this one.
+    internal LabViewerProfile? FindPasswordEndpoint(string host, int port)
+    {
+        ValidatePasswordEndpoint(host, port);
+        var matches = Load().Profiles.Where(p => p.AuthMode == "Password" &&
+            string.Equals(p.Host, host, StringComparison.OrdinalIgnoreCase) &&
+            p.Port == port).ToList();
+        if (matches.Select(p => p.ServerSha256).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
+            throw new InvalidDataException("Conflicting trusted identities for this endpoint. Remove the affected profiles manually.");
+        return matches.FirstOrDefault()?.Copy();
+    }
+
+    internal LabViewerProfile RememberQuickPasswordEndpoint(string name, string host,
+                                                              int port, string serverSha256)
+    {
+        var candidate = new LabViewerProfile {
+            Id = Guid.NewGuid().ToString("N"),
+            Name = name.Trim(), Host = host.Trim(), Port = port,
+            AuthMode = "Password", ClientCertificateThumbprint = "",
+            ServerSha256 = serverSha256.ToUpperInvariant()
+        };
+        ValidateProfile(candidate);
+        return WithExclusiveLock(() => {
+            var catalog = ReadOrMigrate();
+            var matches = catalog.Profiles.Where(p => p.AuthMode == "Password" &&
+                string.Equals(p.Host, candidate.Host, StringComparison.OrdinalIgnoreCase) &&
+                p.Port == candidate.Port).ToList();
+            if (matches.Any(p => !string.Equals(p.ServerSha256, candidate.ServerSha256,
+                                                StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException(
+                    "Server identity changed! Password was not saved. Remove the old trusted profile only after verifying the server.");
+            var previous = matches.FirstOrDefault();
+            if (previous is not null)
+            {
+                catalog.SelectedProfileId = previous.Id;
+                Save(catalog);
+                return previous.Copy();
+            }
+            catalog.Profiles.Add(candidate);
+            catalog.SelectedProfileId = candidate.Id;
+            Save(catalog);
+            return candidate.Copy();
+        });
+    }
+
+    private static void ValidatePasswordEndpoint(string host, int port)
+    {
+        if (!ValidHost(host) || port is < 1024 or > 65535)
+            throw new InvalidDataException("Enter a valid server IP/host and TLS password port.");
+    }
+
     internal LabViewerProfile ImportPairing(string pfxPath, string password,
                                             string? name = null, string? host = null)
     {

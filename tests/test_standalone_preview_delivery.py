@@ -23,6 +23,14 @@ class StandalonePreviewContracts(unittest.TestCase):
         self.assertIn("TJ.RemoteAccess.M3.Agent.csproj", solution)
         self.assertIn("TJ.RemoteAccess.M3.ControlService.csproj", solution)
 
+    def test_product_and_supervisor_file_versions_are_synchronized(self):
+        products = ("Server", "Viewer", "Setup", "M3.Agent", "M3.ControlService")
+        for component in products:
+            root = ET.parse(SRC / f"TJ.RemoteAccess.{component}.csproj").getroot()
+            self.assertEqual("0.5.2-preview", root.findtext("./PropertyGroup/Version"))
+            self.assertEqual("0.5.2.0", root.findtext("./PropertyGroup/AssemblyVersion"))
+            self.assertEqual("0.5.2.0", root.findtext("./PropertyGroup/FileVersion"))
+
     def test_standalone_settings_isolate_lab_and_tightvnc(self):
         settings = (SRC / "LabCertificates.cs").read_text(encoding="utf-8-sig")
         self.assertIn('DirectoryName = "TJ.RemoteAccess.Lab"', settings)
@@ -86,6 +94,41 @@ class StandalonePreviewContracts(unittest.TestCase):
             self.assertNotIn("sc.exe", text)
             self.assertNotIn("New-NetFirewallRule", text)
             self.assertNotIn("Uninstall-TightVNC", text)
+
+    def test_server_tray_is_preview_only_and_stays_alive_on_close(self):
+        tray = (SRC / "LabServerTray.cs").read_text(encoding="utf-8-sig")
+        server = (SRC / "LabServer.cs").read_text(encoding="utf-8-sig")
+        preview_project = (SRC / "TJ.RemoteAccess.Server.csproj").read_text(encoding="utf-8-sig")
+        lab_project = (SRC / "TJ.RemoteAccess.Lab.Server.csproj").read_text(encoding="utf-8-sig")
+        for phrase in ("NotifyIcon", "ContextMenuStrip", "MouseDoubleClick",
+                       "Status: ", "ViewerSummary", "ControllerSummary",
+                       "Exit TJ.RemoteAccess", "ShouldHideOnClose",
+                       "ServiceSupervision", "MutexName", "RestoreEventName"):
+            self.assertIn(phrase, tray)
+        for phrase in ("_tray.ShouldHideOnClose", "HideToTray",
+                       "RestoreFromTray", "ToggleServiceSupervision",
+                       "TryResumeAfterUnlock", "_resumeAfterUnlock",
+                       "SessionSwitchReason.SessionUnlock", "StopServerCore",
+                       "M3InteractiveDesktopGuard.IsNormalInteractiveDesktop"):
+            self.assertIn(phrase, server)
+        self.assertIn('<Compile Include="LabServerTray.cs" />', preview_project)
+        self.assertNotIn('<Compile Include="LabServerTray.cs" />', lab_project)
+        self.assertIn('<Compile Include="M3DesktopEnrollment.cs" />', preview_project)
+        self.assertIn('<Version>0.5.2-preview</Version>', preview_project)
+
+    def test_offline_installers_accept_all_bundled_readonly_tools(self):
+        builder = (TOOLS / "Build-TJRemoteAccess-Preview-OfflinePackage.ps1").read_text(encoding="utf-8-sig")
+        offline = (TOOLS / "Install-TJRemoteAccess-Preview-Offline.ps1").read_text(encoding="utf-8-sig")
+        service_builder = (TOOLS / "Build-TJRemoteAccess-ServicePreviewPackage.ps1").read_text(encoding="utf-8-sig")
+        service_installer = (TOOLS / "Install-TJRemoteAccess-ServicePreview.ps1").read_text(encoding="utf-8-sig")
+        for file_name in ("Measure-TJRemoteAccess-Preview.ps1",
+                          "Set-TJRemoteAccess-Preview-Startup.ps1"):
+            self.assertIn(file_name, builder)
+            self.assertIn(file_name, offline)
+        self.assertIn("Measure-TJRemoteAccess-Preview.ps1", service_builder)
+        self.assertIn("Measure-TJRemoteAccess-Preview.ps1", service_installer)
+        self.assertIn("0.5.2-preview", builder)
+        self.assertIn("0.5.2-preview", service_builder)
 
 if __name__ == "__main__":
     unittest.main()

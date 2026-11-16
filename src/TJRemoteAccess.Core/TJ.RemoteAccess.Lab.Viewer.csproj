@@ -17,6 +17,7 @@
     <Compile Include="LabViewerLaunch.cs" />
     <Compile Include="LabViewerProfileDialogs.cs" />
     <Compile Include="LabViewerPasswordDialogs.cs" />
+    <Compile Include="LabQuickPasswordTrust.cs" />
     <Compile Include="LabViewer.cs" />
   </ItemGroup>
 </Project>

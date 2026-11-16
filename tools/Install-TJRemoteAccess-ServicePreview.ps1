@@ -44,6 +44,7 @@ $allowed = @($serviceExe, $agentExe, 'LICENSE', 'source.zip',
     'Install-TJRemoteAccess-ServicePreview.ps1',
     'Uninstall-TJRemoteAccess-ServicePreview.ps1',
     'Test-TJRemoteAccess-ServicePreview.ps1',
+    'Measure-TJRemoteAccess-Preview.ps1',
     'TJ.RemoteAccess.Server.exe', 'TJ.RemoteAccess.Setup.exe', 'TJ.RemoteAccess.Viewer.exe')
 $allowedAll = @($allowed + @('manifest.json'))
 $rootDir = Join-Path $env:ProgramFiles 'TJ.RemoteAccess'

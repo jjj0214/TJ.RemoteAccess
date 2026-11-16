@@ -13,7 +13,11 @@ internal static class LabViewerPasswordDialogs
     internal static LabViewerProfile? Add(IWin32Window owner, LabViewerProfileStore store)
     {
         using var dialog = new Form {
+            #if TJRA_STANDALONE_PREVIEW
+            Text = "Advanced: add manually pinned password server",
+#else
             Text = "Add password server — pinned TLS (LAB ONLY)",
+#endif
             Width = 710, Height = 350, MinimumSize = new Size(650, 330),
             StartPosition = FormStartPosition.CenterParent,
             FormBorderStyle = FormBorderStyle.FixedDialog,
@@ -30,7 +34,7 @@ internal static class LabViewerPasswordDialogs
         table.RowStyles.Add(new RowStyle(SizeType.Absolute, 43));
         var name = new TextBox { Text = "Password server", Dock = DockStyle.Fill };
         var host = new TextBox { Text = "192.168.0.100", Dock = DockStyle.Fill };
-        var port = new NumericUpDown { Minimum = 1024, Maximum = 65535, Value = 15445,
+        var port = new NumericUpDown { Minimum = 1024, Maximum = 65535, Value = LabCertificates.DefaultPort + 1,
                                         Dock = DockStyle.Left, Width = 105 };
         var pin = new TextBox { Dock = DockStyle.Fill, CharacterCasing = CharacterCasing.Upper };
         Row("Profile name", name, 0);
@@ -70,9 +74,15 @@ internal static class LabViewerPasswordDialogs
         };
         var warning = new Label {
             Dock = DockStyle.Fill,
+#if TJRA_STANDALONE_PREVIEW
+            Text = "Advanced manual pairing: obtain this 64-character Server SHA-256 pin via\n" +
+                   "a trusted channel. Or use Quick connect for first-use fingerprint verification.\n" +
+                   "Password is entered at connect time and never stored. TLS is always required."
+#else
             Text = "TLS encryption is ALWAYS required. Verify the 64-character server SHA-256\n" +
                    "on the Server PC through a trusted channel. No TOFU or unpinned TLS is allowed.\n" +
                    "The password is entered at CONNECT time, not stored in this profile."
+#endif
         };
         table.Controls.Add(warning, 0, 4);
         table.SetColumnSpan(warning, 2);

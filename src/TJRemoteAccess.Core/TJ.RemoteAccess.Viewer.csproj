@@ -4,9 +4,9 @@
     <TargetFramework>net9.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
-    <Version>0.5.0-preview</Version>
-    <AssemblyVersion>0.5.0.0</AssemblyVersion>
-    <FileVersion>0.5.0.0</FileVersion>
+    <Version>0.5.2-preview</Version>
+    <AssemblyVersion>0.5.2.0</AssemblyVersion>
+    <FileVersion>0.5.2.0</FileVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <AssemblyName>TJ.RemoteAccess.Viewer</AssemblyName>
@@ -21,6 +21,8 @@
     <Compile Include="LabViewerLaunch.cs" />
     <Compile Include="LabViewerProfileDialogs.cs" />
     <Compile Include="LabViewerPasswordDialogs.cs" />
+    <Compile Include="LabQuickPasswordTrust.cs" />
+    <Compile Include="LabViewerQuickPasswordDialog.cs" />
     <Compile Include="LabViewer.cs" />
   </ItemGroup>
 </Project>

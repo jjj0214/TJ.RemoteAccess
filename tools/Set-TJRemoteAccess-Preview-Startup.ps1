@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Opt-in startup of the CURRENT USER's visible Preview Server after Windows logon.
+  Opt-in startup of the CURRENT USER's tray-resident Preview Server after Windows logon.
 .DESCRIPTION
   Registers a per-user, least-privilege logon task. Explicit Enable only.
   Does NOT install a Windows service, run as SYSTEM, alter UAC, unlock the PC,
@@ -48,7 +48,7 @@ if ($Action -eq 'Status') {
         ServerBinaryPresent = Test-Path -LiteralPath $serverExe -PathType Leaf
         State = if ($existing) { [string]$existing.State } else { 'NotInstalled' }
         TaskArguments = if ($existing) { @($existing.Actions)[0].Arguments } else { $null }
-        Note = 'Starts only after interactive user logon; no Windows Service or lock-screen support.'
+        Note = 'Starts in the system tray only after interactive user logon; no Windows Service or lock-screen support.'
     } | Format-List
     return
 }
@@ -88,13 +88,13 @@ $register = @{
     Trigger = $trigger
     Principal = $principal
     Settings = $settings
-    Description = 'TJ.RemoteAccess Preview: user-visible Server after explicit user logon (not a system service)'
+    Description = 'TJ.RemoteAccess Preview: tray-resident Server after explicit user logon (not a system service)'
     Force = $true
     ErrorAction = 'Stop'
 }
 Register-ScheduledTask @register | Out-Null
 Write-Host "Current-user visible TJRA Preview Server startup ENABLED for $identity."
 Write-Host "Launch arguments: $arguments"
-Write-Host 'Task starts on NEXT logon, not on secure desktop or before login.'
-Write-Host 'The Server intentionally stops on session lock/logoff/disconnect; it does not auto-restart on unlock.'
+Write-Host 'Task starts hidden in the notification area on NEXT logon, never before login or on a secure desktop.'
+Write-Host 'The interactive Server stops on lock/logoff/disconnect and may resume after unlock only on the authorized Default desktop; it never controls a locked/UAC desktop.'
 Write-Host 'To undo: rerun this script with -Action Disable.'

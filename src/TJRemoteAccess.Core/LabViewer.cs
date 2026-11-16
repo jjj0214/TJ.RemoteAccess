@@ -44,6 +44,11 @@ internal sealed class LabViewerForm : Form
     };
     private readonly Button _addProfile = new() { Text = "Add server", AutoSize = true };
     private readonly Button _addPassword = new() { Text = "Add password server", AutoSize = true };
+#if TJRA_STANDALONE_PREVIEW
+    private readonly Button _quickConnect = new() {
+        Text = "Quick connect (IP + password)", AutoSize = true
+    };
+#endif
     private readonly Button _editProfile = new() { Text = "Edit", AutoSize = true };
     private readonly Button _removeProfile = new() { Text = "Remove", AutoSize = true };
     private readonly Button _detailsProfile = new() { Text = "Identity", AutoSize = true };
@@ -101,6 +106,13 @@ internal sealed class LabViewerForm : Form
         toolbar.Controls.Add(_profilePicker);
         toolbar.Controls.Add(_addProfile);
         toolbar.Controls.Add(_addPassword);
+#if TJRA_STANDALONE_PREVIEW
+        toolbar.Controls.Add(_quickConnect);
+        _quickConnect.Click += async (_, _) => {
+            var request = LabViewerQuickPasswordDialog.Prompt(this, _host.Text);
+            if (request is not null) await ConnectAsync(request);
+        };
+#endif
         toolbar.Controls.Add(_editProfile);
         toolbar.Controls.Add(_removeProfile);
         toolbar.Controls.Add(_detailsProfile);
@@ -149,7 +161,13 @@ internal sealed class LabViewerForm : Form
         {
             Shown += async (_, _) => await ConnectAsync();
         }
+#if TJRA_STANDALONE_PREVIEW
+        _status.Text = SelectedProfile is null
+            ? "Quick connect with IP + password, or add a certificate server."
+            : "Ready. Select a server or use Quick connect.";
+#else
         _status.Text = SelectedProfile is null ? "No server paired. Click Add server." : "Ready. Select a saved server to connect.";
+#endif
     }
 
     private bool CanControl => _connected && _role == LabRole.Controller;
@@ -228,6 +246,9 @@ private LabViewerProfile? SelectedProfile =>
         _profilePicker.Enabled = !busy;
         _addProfile.Enabled = !busy;
         _addPassword.Enabled = !busy;
+#if TJRA_STANDALONE_PREVIEW
+        _quickConnect.Enabled = !busy;
+#endif
         _editProfile.Enabled = !busy && SelectedProfile is not null;
         _removeProfile.Enabled = !busy && SelectedProfile is not null;
         _detailsProfile.Enabled = !busy && SelectedProfile is not null;
@@ -285,27 +306,70 @@ private LabViewerProfile? SelectedProfile =>
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
-    private async Task ConnectAsync()
+    private async Task ConnectAsync(LabQuickPasswordRequest? quick = null)
     {
         if (_connecting || _connected || _tcp is not null) return;
         _connecting = true;
         try
         {
             UpdateProfileControls();
-            var selected = SelectedProfile ?? throw new InvalidOperationException(
-                "Select or pair a saved server before connecting.");
-            // Editing the host is permitted, but it never changes the pinned
-            // server identity or the client certificate for this profile.
-            var host = _host.Text.Trim();
-            var port = (int)_port.Value;
-            var profile = (host != selected.Host || port != selected.Port)
-                ? _profileStore.Edit(selected.Id, selected.Name, host, port)
-                : selected;
+            LabViewerProfile profile;
+            string? loginPassword;
+            bool firstUse = false;
+            if (quick is not null)
+            {
+                if (!LabWire.ValidPassword(quick.Password))
+                    throw new InvalidDataException("Enter a valid Server password (12..128 printable characters).");
+                var existing = _profileStore.FindPasswordEndpoint(quick.Host, quick.Port);
+                firstUse = existing is null;
+                profile = existing ?? new LabViewerProfile {
+                    Id = Guid.NewGuid().ToString("N"),
+                    Name = ("Password " + quick.Host)[..Math.Min(80, 9 + quick.Host.Length)],
+                    Host = quick.Host, Port = quick.Port,
+                    AuthMode = "Password", ClientCertificateThumbprint = "",
+                    ServerSha256 = ""
+                };
+                loginPassword = quick.Password;
+            }
+            else
+            {
+                var selected = SelectedProfile ?? throw new InvalidOperationException(
+                    "Select or pair a saved server before connecting.");
+                // Editing a saved endpoint never disables pinned certificate verification.
+                var host = _host.Text.Trim();
+                var port = (int)_port.Value;
+                profile = (host != selected.Host || port != selected.Port)
+                    ? _profileStore.Edit(selected.Id, selected.Name, host, port)
+                    : selected;
+                loginPassword = profile.AuthMode == "Password" ?
+                    LabViewerPasswordDialogs.PromptPassword(this) : null;
+                if (profile.AuthMode == "Password" && loginPassword is null) return;
+            }
             _status.Text = $"Authenticating TLS: {profile.Name}...";
             bool passwordMode = profile.AuthMode == "Password";
-            string? loginPassword = passwordMode ?
-                LabViewerPasswordDialogs.PromptPassword(this) : null;
-            if (passwordMode && loginPassword is null) return;
+            bool firstUseApproved = false;
+            if (firstUse)
+            {
+#if TJRA_STANDALONE_PREVIEW
+                // Phase 1: TLS fingerprint-only probe. No PasswordLogin or
+                // Hello packet is sent; close this connection before the
+                // operator compares SHA-256 on the actual Server computer.
+                string presentedSha = await LabQuickPasswordTrust.ProbeServerIdentityAsync(
+                    profile.Host, profile.Port, CancellationToken.None);
+                _status.Text = "Verify Server identity before sending password.";
+                firstUseApproved = LabViewerQuickPasswordDialog.ConfirmFirstUse(
+                    this, profile.Host, profile.Port, presentedSha);
+                if (!firstUseApproved)
+                    throw new AuthenticationException(
+                        "Server identity not approved. Password was NOT sent.");
+                // Phase 2 MUST verify this exact pin again. A changed Server
+                // certificate between probe/confirm and login is rejected.
+                profile.ServerSha256 = presentedSha;
+#else
+                throw new AuthenticationException("First-use trust is not available in Lab.");
+#endif
+            }
+            string? observedServerPin = null;
             using var clientCert = passwordMode ? null :
                 LabCertificates.LoadPrivateCertificate(profile.ClientCertificateThumbprint);
             if (clientCert is not null &&
@@ -327,13 +391,32 @@ private LabViewerProfile? SelectedProfile =>
                 EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
                 CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
                 RemoteCertificateValidationCallback = (_, cert, _, _) =>
-                    LabCertificates.ValidatePinned(cert, profile.ServerSha256,
-                                                   LabCertificates.ServerEku)
+                {
+                    if (passwordMode)
+                    {
+                        // The real password TLS session always uses an EXACT
+                        // Server pin. For first use, it was confirmed using a
+                        // separate, closed, fingerprint-only TLS probe.
+                        observedServerPin = LabQuickPasswordTrust.ExamineServer(
+                            cert, profile.ServerSha256);
+                        return observedServerPin is not null;
+                    }
+                    return LabCertificates.ValidatePinned(cert, profile.ServerSha256,
+                                                          LabCertificates.ServerEku);
+                }
             };
             await _tls.AuthenticateAsClientAsync(options, token)
                       .WaitAsync(TimeSpan.FromSeconds(12), token);
             if (passwordMode)
             {
+                bool identityApproved = !firstUse || firstUseApproved;
+                // Encrypted TLS handshake alone does NOT authenticate an
+                // unknown Server. NEVER send a password before verification.
+                if (!LabQuickPasswordTrust.MaySendPassword(
+                    _tls.IsAuthenticated, _tls.IsEncrypted,
+                    observedServerPin, identityApproved))
+                    throw new AuthenticationException(
+                        "Server identity was not verified. Password was NOT sent.");
                 byte[] secret = LabWire.PasswordLogin(loginPassword!);
                 loginPassword = null;
                 try {
@@ -349,6 +432,14 @@ private LabViewerProfile? SelectedProfile =>
             if (welcome.Type != LabMessage.Welcome)
                 throw new AuthenticationException("Server did not authorize this viewer.");
             var metadata = LabWire.ParseWelcome(welcome.Payload);
+            if (firstUse)
+            {
+                // Successful welcome proves knowledge of the configured
+                // Server password on this accepted TLS channel; pin the
+                // exact Host:Port+SHA for future silent verification.
+                profile = _profileStore.RememberQuickPasswordEndpoint(
+                    profile.Name, profile.Host, profile.Port, observedServerPin!);
+            }
             _desktopWidth = metadata.Width;
             _desktopHeight = metadata.Height;
             _role = metadata.Role;
@@ -418,8 +509,15 @@ private LabViewerProfile? SelectedProfile =>
                             oldImage?.Dispose();
                             _frameCount++;
                             if (_frameCount % 30 == 0)
+                            {
+#if TJRA_STANDALONE_PREVIEW
+                                _status.Text = $"Connected ({_role}) | {_frameCount} frames | " +
+                                               $"{_desktopWidth}x{_desktopHeight} | TLS Preview";
+#else
                                 _status.Text = $"Connected ({_role}) | {_frameCount} frames | " +
                                                $"{_desktopWidth}x{_desktopHeight} | LAB ONLY";
+#endif
+                            }
                         }
                         finally
                         {

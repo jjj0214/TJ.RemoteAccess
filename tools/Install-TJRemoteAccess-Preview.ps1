@@ -37,7 +37,7 @@ $running = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
                         'TJ.RemoteAccess.Setup')
 })
 if ($running.Count -gt 0) {
-    throw 'Close TJ.RemoteAccess Preview Server/Viewer/Setup before updating binaries.'
+    throw 'Close TJ.RemoteAccess Preview Server/Viewer/Setup before updating. If Server is in the tray, right-click its TJ icon and choose Exit TJ.RemoteAccess.'
 }
 $profileDirectory = Join-Path $env:LOCALAPPDATA 'TJ.RemoteAccess'
 $batch = [guid]::NewGuid().ToString('N')

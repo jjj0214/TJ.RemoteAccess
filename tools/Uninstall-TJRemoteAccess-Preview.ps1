@@ -10,7 +10,7 @@ $ErrorActionPreference = 'Stop'
 $running = Get-Process -ErrorAction SilentlyContinue | Where-Object {
     $_.ProcessName -in @('TJ.RemoteAccess.Server','TJ.RemoteAccess.Viewer','TJ.RemoteAccess.Setup')
 }
-if ($running) { throw 'Close all TJ.RemoteAccess Preview processes before uninstalling.' }
+if ($running) { throw 'Close all TJ.RemoteAccess Preview processes before uninstalling. Exit the Server from its notification-area icon.' }
 $install = Join-Path $env:LOCALAPPDATA 'Programs\TJ.RemoteAccess'
 $taskName = 'TJ.RemoteAccess.CurrentUser.Server'
 $serverExe = Join-Path $install 'Server\TJ.RemoteAccess.Server.exe'

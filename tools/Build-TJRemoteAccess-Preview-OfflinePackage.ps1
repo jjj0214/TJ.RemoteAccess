@@ -9,7 +9,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^[A-Za-z0-9.+-]{1,40}$')]
-    [string]$Version = '0.5.0-preview',
+    [string]$Version = '0.5.2-preview',
     [switch]$SkipBuild
 )
 Set-StrictMode -Version Latest
@@ -56,7 +56,9 @@ try {
     )
     foreach ($script in @('Install-TJRemoteAccess-Preview-Offline.ps1',
                           'Uninstall-TJRemoteAccess-Preview.ps1',
-                          'Test-TJRemoteAccess-Preview.ps1')) {
+                          'Test-TJRemoteAccess-Preview.ps1',
+                          'Measure-TJRemoteAccess-Preview.ps1',
+                          'Set-TJRemoteAccess-Preview-Startup.ps1')) {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $script) -Destination (
             Join-Path $stage $script
         ) -ErrorAction Stop

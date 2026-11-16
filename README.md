@@ -18,11 +18,31 @@ for concrete implementation blockers. The static audit never approves deployment
 
 ## Independent TJ.RemoteAccess preview (Windows x64, isolated test PCs only)
 
-- Product-facing solution: `TJ.RemoteAccess.sln` builds **0.5.0-preview** `TJ.RemoteAccess.Server.exe`,
+- Product-facing solution: `TJ.RemoteAccess.sln` builds **0.5.2-preview** `TJ.RemoteAccess.Server.exe`,
   `TJ.RemoteAccess.Viewer.exe`, `TJ.RemoteAccess.Setup.exe`, an authenticated
   `TJRA.ControlService` + per-user Agent, and regression tests. It uses its
   own user configuration (`%LOCALAPPDATA%\\TJ.RemoteAccess`) and TCP 15544/
   optional 15545 rather than Lab 15444/15445 or TightVNC 5900.
+- Standalone Viewer **Quick connect (IP + password)** on TLS port 15545:
+  no Viewer PFX/certificate needed. The Viewer first probes a self-signed
+  Server's SHA-256 fingerprint over TLS WITHOUT sending its password, closes
+  the probe, requires explicit verification against the real Server PC,
+  then opens a SECOND exact-pinned TLS channel to authenticate. Only a
+  successful Server Welcome remembers the endpoint's public SHA pin.
+  Changed identities fail closed; passwords are never persisted in Viewer.
+  The original certificate/pinned TLS mode and 3-Viewer/1-Controller policy
+  remain intact. Server tray > Password access is opt-in and ViewOnly by
+  default. Guide: `docs/QUICK_PASSWORD_ACCESS_0_5_2_20261116_KO.md`.
+- Windows Server **system tray UI**: live gray/blue/green status icon,
+  up to 3 Viewer/controller count, Open/Start/Stop, Client access, Password
+  access and explicit Exit. Window X/minimize hides to tray, not disconnects.
+  A second launch restores the existing Server rather than duplicating icons.
+  Tray menu also allows the local user to opt in/out of service supervision;
+  it does not bypass the independent administrator policy.
+- Updated `Measure-TJRemoteAccess-Preview.ps1` performs read-only CPU,
+  memory, handle/GDI/USER sampling for Server/Viewer/Agent/Service without
+  running or reconfiguring remote-access components. Long-running 270 PPM
+  and GPU/tact impact acceptance still requires real inspection systems.
 - A user-approved visible desktop Server can be supervised by a Windows Service:
   both administrator-owned `desktop-host-policy.json` AND current-user TLS
   certificate-bound `service-host enable --confirm-local-owner` enrollment are
@@ -37,9 +57,11 @@ for concrete implementation blockers. The static audit never approves deployment
   production security, Win10/11 compatibility or unattended/secure desktop
   behavior. The standalone build is a **PREVIEW, NOT a finished TightVNC
   replacement**. Do not deploy at customer facilities.
-- Release build of Product and Lab solutions and C++ native test projects, Windows xUnit **164/164**, product-preview isolation xUnit **3/3**, and Python unittest all passed (2026-11-16). Windows PowerShell AST parsing of installer scripts passed; actual installer/SCM execution, GUI acceptance, code signing and MSI are **not tested**.
+- Release build of Product and Lab solutions and C++ native test projects, Windows xUnit **165/165**, product-preview xUnit **24/24**, and Python unittest all passed (2026-11-16). Windows PowerShell AST parsing of installer scripts passed; actual installer/SCM execution, GUI acceptance, code signing and MSI are **not tested**.
 - Windows test gates and initial commands:
-  `docs/STANDALONE_PREVIEW_BUILD_TEST_20261116_KO.md`.
+  `docs/STANDALONE_PREVIEW_BUILD_TEST_20261116_KO.md`. Tray-specific
+  test steps and 0.5.1-preview acceptance checklist:
+  `docs/TRAY_0_5_1_ACCEPTANCE_20261116_KO.md`.
 
 ## Interactive Lab remote-control prototype (Windows, test PC only)
 
