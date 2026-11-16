@@ -10,21 +10,28 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$PackagePath,
-    [Parameter(Mandatory = $true)]
-    [ValidatePattern('^[0-9a-fA-F]{64}$')]
-    [string]$ExpectedPackageSha256,
+    # Do NOT mark these as mandatory: running a script without arguments
+    # otherwise enters PowerShell's hidden interactive mandatory-argument
+    # prompt and appears to hang. Reject missing args with an explicit error.
+    [string]$PackagePath = '',
+    [string]$ExpectedPackageSha256 = '',
     [ValidateSet('Both', 'Server', 'Viewer')]
     [string]$Mode = 'Both'
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($PackagePath) -or
+    $ExpectedPackageSha256 -notmatch '^[0-9a-fA-F]{64}\z') {
+    throw 'Missing -PackagePath <ZIP> and -ExpectedPackageSha256 <64-char hash>. Prefer TJ.RemoteAccess.Installer.exe GUI.'
+}
 $archivePath = (Resolve-Path -LiteralPath $PackagePath -ErrorAction Stop).Path
 if ([System.IO.Path]::GetExtension($archivePath) -ine '.zip') {
     throw 'Offline Preview package must be a ZIP archive.'
 }
+Write-Host "[1/4] Verifying offline ZIP SHA-256: $archivePath"
+Write-Host 'Large offline packages include GPL sources; verification may read hundreds of MB.'
 $actualPackageHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash
+Write-Host '[1/4] Package SHA-256 verified.'
 if (-not [string]::Equals($actualPackageHash, $ExpectedPackageSha256,
                          [System.StringComparison]::OrdinalIgnoreCase)) {
     throw 'Package SHA-256 does not match the out-of-band trusted hash. No changes made.'
@@ -52,6 +59,7 @@ $allowedRoot = @('LICENSE', 'Install-TJRemoteAccess-Preview-Offline.ps1',
                  'manifest.json', 'source.zip')
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
+Write-Host '[2/4] Checking ZIP entry paths, limits and manifest before changing installed files.'
 $archive = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
 try {
     $zipEntries = @{}
@@ -141,18 +149,77 @@ try {
             throw "Required executable missing from package: $component"
         }
     }
+    Write-Host '[3/4] Verifying and extracting components with visible progress...'
     New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
-    [System.IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $stageRoot)
+    # Stream each entry once with a bounded buffer instead of extracting the
+    # ENTIRE ZIP and then reading everything a second time. The large GPL
+    # source.zip is HASHED but not copied into the installed component staging.
+    # This also makes progress visible and Ctrl+C cancellation responsive.
+    [long]$totalBytes = 0
+    foreach ($row in @($manifest.Files)) { $totalBytes += [long]$row.Bytes }
+    [long]$processedBytes = 0
+    $lastPercent = -1
+    $lastMessageStep = -1
     foreach ($file in @($manifest.Files)) {
-        $fullPath = Join-Path $stageRoot ([string]$file.Path).Replace('/', '\')
-        if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf) -or
-            -not [string]::Equals(
-                (Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash,
-                [string]$file.Sha256,
-                [System.StringComparison]::OrdinalIgnoreCase)) {
-            throw "Manifest hash verification failed: $($file.Path)"
+        $fileName = [string]$file.Path
+        $entry = $zipEntries[$fileName.ToUpperInvariant()]
+        $shouldExtract = $false
+        foreach ($component in $components) {
+            if ($fileName.StartsWith(($component + '/'), [System.StringComparison]::OrdinalIgnoreCase)) {
+                $shouldExtract = $true
+                break
+            }
+        }
+        $output = $null
+        if ($shouldExtract) {
+            $fullPath = Join-Path $stageRoot $fileName.Replace('/', '\')
+            New-Item -ItemType Directory -Path (Split-Path -Parent $fullPath) -Force | Out-Null
+            $output = [System.IO.FileStream]::new(
+                $fullPath, [System.IO.FileMode]::CreateNew,
+                [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        }
+        $sourceStream = $null
+        $hasher = $null
+        try {
+            $sourceStream = $entry.Open()
+            $hasher = [System.Security.Cryptography.SHA256]::Create()
+            $buffer = New-Object 'byte[]' 131072
+            [long]$entryBytes = 0
+            while (($read = $sourceStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                $entryBytes += $read
+                $processedBytes += $read
+                if ($entryBytes -gt [long]$entry.Length -or
+                    $processedBytes -gt $totalBytes) {
+                    throw "ZIP entry expanded beyond declared manifest: $fileName"
+                }
+                [void]$hasher.TransformBlock($buffer, 0, $read, $buffer, 0)
+                if ($null -ne $output) { $output.Write($buffer, 0, $read) }
+                $percent = [int][math]::Floor(100.0 * $processedBytes / [math]::Max(1, $totalBytes))
+                if ($percent -ne $lastPercent) {
+                    Write-Progress -Id 5 -Activity 'TJ.RemoteAccess offline verify/extract' -Status "$percent% - $fileName" -PercentComplete $percent
+                    $lastPercent = $percent
+                    $messageStep = [int][math]::Floor($percent / 10)
+                    if ($messageStep -gt $lastMessageStep) {
+                        Write-Host ("Verified/extracted {0}% ({1:N0}/{2:N0} bytes)" -f $percent, $processedBytes, $totalBytes)
+                        $lastMessageStep = $messageStep
+                    }
+                }
+            }
+            [void]$hasher.TransformFinalBlock([byte[]]::new(0), 0, 0)
+            if ($entryBytes -ne [long]$entry.Length -or
+                -not [string]::Equals(
+                    [System.BitConverter]::ToString($hasher.Hash).Replace('-', ''),
+                    [string]$file.Sha256, [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "Manifest SHA-256 mismatch: $fileName"
+            }
+        } finally {
+            if ($null -ne $output) { $output.Dispose() }
+            if ($null -ne $sourceStream) { $sourceStream.Dispose() }
+            if ($null -ne $hasher) { $hasher.Dispose() }
         }
     }
+    Write-Progress -Id 5 -Activity 'TJ.RemoteAccess offline verify/extract' -Completed
+    Write-Host '[3/4] Entire ZIP verified. Only selected components are staged.'
 } catch {
     if (Test-Path -LiteralPath $stageRoot) {
         Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -160,8 +227,10 @@ try {
     throw
 } finally { $archive.Dispose() }
 
+Write-Host '[4/4] Swapping verified components and retaining backups until successful.'
 try {
     foreach ($component in $components) {
+        Write-Host ("Installing component: {0}" -f $component)
         $target = Join-Path $publishBase $component
         $backup = Join-Path $publishBase ($component + '.backup-' + $batch)
         $hadPrevious = Test-Path -LiteralPath $target -PathType Container

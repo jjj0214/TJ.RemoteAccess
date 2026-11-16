@@ -22,7 +22,7 @@ internal sealed class LabPasswordSettings
 internal sealed class LabPasswordAccess
 {
     internal const int Iterations = 600_000;
-    internal const int MinPasswordCharacters = 12;
+    internal const int MinPasswordCharacters = 6;
     internal const int MaxPasswordCharacters = 128;
     internal const int MaxPasswordBytes = 256;
     private readonly string _directory;
@@ -108,7 +108,7 @@ internal sealed class LabPasswordAccess
     internal void Configure(string password, bool canControl)
     {
         if (!ValidPassword(password))
-            throw new InvalidDataException("Password must be 12..128 printable characters (max 256 UTF-8 bytes).");
+            throw new InvalidDataException("Password must be 6..128 printable characters (max 256 UTF-8 bytes).");
         byte[] salt = RandomNumberGenerator.GetBytes(32);
         byte[] verifier = Rfc2898DeriveBytes.Pbkdf2(
             password, salt, Iterations, HashAlgorithmName.SHA256, 32);

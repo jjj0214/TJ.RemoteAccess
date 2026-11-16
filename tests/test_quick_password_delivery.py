@@ -67,7 +67,7 @@ class QuickPasswordDelivery(unittest.TestCase):
             self.assertIn(token, server)
         self.assertIn("CryptographicOperations.FixedTimeEquals", access)
         self.assertIn("Rfc2898DeriveBytes.Pbkdf2", access)
-        self.assertIn("MinPasswordCharacters = 12", access)
+        self.assertIn("MinPasswordCharacters = 6", access)
         self.assertIn("Copy Server pin", dialog)
         self.assertNotIn("TcpListener(_address, 5900)", server)
 
@@ -75,10 +75,10 @@ class QuickPasswordDelivery(unittest.TestCase):
         for file in ("TJ.RemoteAccess.Server.csproj", "TJ.RemoteAccess.Viewer.csproj",
                      "TJ.RemoteAccess.Setup.csproj", "TJ.RemoteAccess.M3.Agent.csproj",
                      "TJ.RemoteAccess.M3.ControlService.csproj"):
-            self.assertIn("0.5.2-preview", (SRC / file).read_text(encoding="utf-8-sig"))
+            self.assertIn("0.5.3-preview", (SRC / file).read_text(encoding="utf-8-sig"))
         for file in ("Build-TJRemoteAccess-Preview-OfflinePackage.ps1",
                      "Build-TJRemoteAccess-ServicePreviewPackage.ps1"):
-            self.assertIn("0.5.2-preview", (TOOLS / file).read_text(encoding="utf-8-sig"))
+            self.assertIn("0.5.3-preview", (TOOLS / file).read_text(encoding="utf-8-sig"))
         doc = (DOCS / "QUICK_PASSWORD_ACCESS_0_5_2_20261116_KO.md").read_text(
             encoding="utf-8-sig")
         for phrase in ("15544", "15545", "Q01", "Q13", "TLS", "SHA-256"):

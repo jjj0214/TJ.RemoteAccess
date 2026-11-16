@@ -18,7 +18,7 @@ for concrete implementation blockers. The static audit never approves deployment
 
 ## Independent TJ.RemoteAccess preview (Windows x64, isolated test PCs only)
 
-- Product-facing solution: `TJ.RemoteAccess.sln` builds **0.5.2-preview** `TJ.RemoteAccess.Server.exe`,
+- Product-facing solution: `TJ.RemoteAccess.sln` builds **0.5.3-preview** `TJ.RemoteAccess.Server.exe`,
   `TJ.RemoteAccess.Viewer.exe`, `TJ.RemoteAccess.Setup.exe`, an authenticated
   `TJRA.ControlService` + per-user Agent, and regression tests. It uses its
   own user configuration (`%LOCALAPPDATA%\\TJ.RemoteAccess`) and TCP 15544/
@@ -48,16 +48,30 @@ for concrete implementation blockers. The static audit never approves deployment
   certificate-bound `service-host enable --confirm-local-owner` enrollment are
   required. Default is status-only, and a Job object kills the Server if its
   user Agent dies. Winlogon, lock screen, UAC/secure desktop are **denied**.
-- Windows `tools/Install-TJRemoteAccess-Preview.ps1` is a current-user GUI
-  installer; `Build-TJRemoteAccess-Preview-OfflinePackage.ps1` and
-  `Build-TJRemoteAccess-ServicePreviewPackage.ps1` create hash-manifested,
-  GPL source-corresponding, unsigned ZIPs from a clean HEAD.
+- Standalone **0.5.3-preview graphical installer**:
+  `TJ.RemoteAccess.Installer.exe` is self-contained for Windows x64,
+  double-clickable (no PowerShell or .NET SDK needed on the target PC).
+  It accepts an offline ZIP and SHA-256, shows progress/logs/active
+  TJRA process IDs, validates every manifest file before changing any
+  installed component, and rolls back incomplete component swaps.
+  Build artifact is produced in GitHub Actions from
+  `tools/Build-TJRemoteAccess-Preview-GuiPackage.ps1`;
+  this is an **unsigned EXE setup window, not an MSI**.
+  The old PowerShell offline installer remains as a fallback, now with
+  streaming hash validation/progress, instead of silent full ZIP extraction.
+  Instructions: `docs/GUI_INSTALLER_0_5_3_20261116_KO.md`.
+- The password-mode Server minimum is **6 characters** (5 rejected;
+  12+ recommended). TLS 1.2/1.3, Server pinning, lockout controls and
+  Viewer password non-persistence remain unchanged.
+- Developer-only `Build-TJRemoteAccess-Preview-OfflinePackage.ps1` and
+  `Build-TJRemoteAccess-ServicePreviewPackage.ps1` produce GPL
+  source-corresponding, unsigned, checksum-manifested ZIP artifacts.
 - Development tests (Release compilation and process/IPC checks) **do not**
   prove LocalSystem SCM installation, real remote GUI from the service,
   production security, Win10/11 compatibility or unattended/secure desktop
   behavior. The standalone build is a **PREVIEW, NOT a finished TightVNC
   replacement**. Do not deploy at customer facilities.
-- Release build of Product and Lab solutions and C++ native test projects, Windows xUnit **165/165**, product-preview xUnit **24/24**, and Python unittest all passed (2026-11-16). Windows PowerShell AST parsing of installer scripts passed; actual installer/SCM execution, GUI acceptance, code signing and MSI are **not tested**.
+- Release build of Product and Lab solutions and C++ native test projects, Windows xUnit **167/167**, product-preview xUnit **40/40**, and Python unittest all passed (2026-11-16). Windows PowerShell AST parsing of installer scripts passed; actual installer/SCM execution, GUI acceptance, code signing and MSI are **not tested**.
 - Windows test gates and initial commands:
   `docs/STANDALONE_PREVIEW_BUILD_TEST_20261116_KO.md`. Tray-specific
   test steps and 0.5.1-preview acceptance checklist:

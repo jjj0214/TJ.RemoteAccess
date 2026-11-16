@@ -79,7 +79,7 @@ internal static class LabWire
 
     internal static string ParsePasswordLogin(ReadOnlySpan<byte> payload)
     {
-        if (payload.Length is < 13 or > 257 || payload[0] != Version)
+        if (payload.Length is < 7 or > 257 || payload[0] != Version)
             throw new InvalidDataException("Malformed password login packet.");
         try
         {
@@ -95,7 +95,7 @@ internal static class LabWire
     }
 
     internal static bool ValidPassword(string? password) =>
-        password is { Length: >= 12 and <= 128 } &&
+        password is { Length: >= 6 and <= 128 } &&
         !password.Any(char.IsControl) &&
         System.Text.Encoding.UTF8.GetByteCount(password) <= 256;
 

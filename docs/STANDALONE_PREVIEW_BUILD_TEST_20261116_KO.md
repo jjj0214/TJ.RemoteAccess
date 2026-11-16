@@ -4,29 +4,30 @@
 
 최종 목표: TightVNC의 실행 파일과 서비스가 없어도 독립 TJ.RemoteAccess Server, Viewer, Setup, Windows ControlService 및 SessionAgent만으로 Windows PC의 원격 화면과 입력, 인증, 다중 접속, 시작/중단, 설치/업데이트/원복을 제공하는 것.
 
-**현재는 0.5.2-preview 개발 빌드로, 완성된 TightVNC 대체 제품이 아니다.** 아래 실험 외 현장/고객사에서는 적용하지 않는다. 제품에 GPL 대응 소스/라이선스를 포함하지만 코드 서명 및 정식 MSI는 남았다.
+**현재는 0.5.3-preview 개발 빌드로, 완성된 TightVNC 대체 제품이 아니다.** 아래 실험 외 현장/고객사에서는 적용하지 않는다. 제품에 GPL 대응 소스/라이선스를 포함하지만 코드 서명 및 정식 MSI는 남았다.
 
 이 Preview의 기능 경계:
 
 | 항목 | 현재 기능 | 검증 상태 |
 |---|---|---|
-| 독립 Server, Viewer, Setup | .NET 9 앱호스트, TightVNC API/설치 의존 없음 | 0.5.2-preview Release 컴파일/자동 테스트, 실제 2 PC Preview 수용 미실행 |
+| 독립 Server, Viewer, Setup | .NET 9 앱호스트, TightVNC API/설치 의존 없음 | 0.5.3-preview Release 컴파일/자동 테스트, 실제 2 PC Preview 수용 미실행 |
 | 사용자 세션 화면/입력 | 인증된 TLS Server, Viewer 최대 3 / Controller 1 | 기존 M2 Lab 사용자 수용을 근거로 기능 유지; 별도 Preview 새 인증서 2 PC 재검증 필요 |
 | 인증 및 설정 | 기존 Viewer PFX 인증서 모드 + IP/Password 간편 접속(첫 서버 지문 검증 후 자동 저장) | TLS 루프백·프로필·부정 테스트, 실제 2 PC GUI 최종 검증 필요 |
 | 서비스 기반 감독 | LocalSystem ControlService ↔ 사용자 Agent 보안 IPC, 사용자 소유의 visible Server | 코드 + xUnit/독립 일반 사용자 프로세스 IPC 테스트; 실제 Service→Agent→GUI 실기 미검증 |
 | 서비스 재시작 | Auto 서비스, 로그인·잠금 해제 시 새 Agent, 잠금·로그오프 시 종료 | 이벤트 정책 테스트, Windows 실제 SCM/재부팅 미검증 |
 | Winlogon/잠금/UAC 화면 원격제어 | **미지원**; 인증된 사용자 `Default` 데스크톱만 허용 | 보안 데스크톱 거부 정책만 테스트 |
-| TLS 관리, 패키징 | 5개 EXE 포함 서비스 Preview ZIP, 별도 사용자 Preview ZIP, GPL source.zip, SHA-256 | PowerShell Parser/정적 검사, 실제 Package Build+Install+Rollback 미검증 |
+| TLS 관리, 패키징 | 5개 EXE 포함 서비스 Preview ZIP, 사용자 Preview ZIP + WinForms 설치 EXE/진행률/롤백, GPL source.zip·SHA-256 | Installer 엔진 실제 임시폴더 교체·실패 복구 단위 테스트. 배포용 ZIP 생성/GUI 실기 검증 필요 |
 | Native GPL TightVNC fork EngineHost 및 M4 FileTransfer | 독립 C++ gate 기반은 컴파일; 완전 통합/외부 Master 연동 없음 | 미완료 |
 | 공장 생산 영향 | CPU/GPU/장시간/270 PPM/3 Viewer 시험 없음 | 미완료 |
 
 ## 2. 완전히 분리된 프로그램 구성
 
-- `TJ.RemoteAccess.sln`: Product Preview Server, Viewer, Setup, M3 ControlService/Agent, 기존 Lab 회귀 xUnit 및 **독립 Preview xUnit** 통합 빌드
+- `TJ.RemoteAccess.sln`: Product Preview Server, Viewer, Setup, **Installer GUI**, M3 ControlService/Agent, 기존 Lab 회귀 xUnit 및 **독립 Preview xUnit** 통합 빌드
 - `TJ.RemoteAccess.Lab.sln`: 기존 Lab 그대로 유지, 별도 config 및 실행 파일
 - `TJ.RemoteAccess.Server.exe`: **가시적인 사용자 세션**에서 TLS 서버, 화면 공유/키보드/마우스. 기본 port 15544, password TLS 선택 시 +1(15545)
 - `TJ.RemoteAccess.Viewer.exe`: 여러 Server/Viewer 인증서 프로필, 3명 세션 구분
 - `TJ.RemoteAccess.Setup.exe`: 현재 Windows 사용자 인증서 및 등록/인증 관리, service-host 동의
+- `TJ.RemoteAccess.Installer.exe`: 기존 Setup CLI와 별개로 오프라인 ZIP을 설치·업데이트·제거하는 자체 WinForms 설치 창
 - `TJ.RemoteAccess.M3.ControlService.exe`: LocalSystem 서비스 `TJRA.ControlService`. 기본 status-only. Windows 보안 데스크톱에서 입력/화면 직접 접근하지 않음
 - `TJ.RemoteAccess.M3.Agent.exe`: 서비스가 현재 콘솔 사용자의 토큰으로 만든 보안 파이프 인증 SessionAgent. 관리자 정책과 사용자 등록이 둘 다 있을 때만 가시적 Server를 Job 내에서 실행 및 감독
 
@@ -37,6 +38,10 @@
 - 서비스 설치: `%ProgramFiles%\TJ.RemoteAccess\ServicePreview`; 운영자 정책도 같은 ACL 보호 폴더. 프로필/비밀번호/관리자 정책은 CLI 인자나 임의 네트워크로 전달하지 않음.
 
 ## 3. A단계: 사용자 기반 Preview만으로 자체 원격제어 시험
+
+**0.5.3-preview 이후 신규 권장 설치 방법:** GitHub Actions에서 생성된 GUI Installer ZIP을 내려받아 압축 해제 후 `TJ.RemoteAccess.Installer.exe` 더블클릭. 비밀번호는 6자 이상으로 설정할 수 있다. 사용자용 설치에 PowerShell/SDK 불필요. 실제 설치 절차 및 자동/수동 게이트는 `docs/GUI_INSTALLER_0_5_3_20261116_KO.md` 참조.
+
+아래 PowerShell 설치는 **이전 버전 및 개발자용 호환 절차**로 남겨둔다.
 
 **최초에는 격리된 테스트 PC 두 대를 이용하고 Windows Service는 설치하지 않는다.**
 
@@ -108,7 +113,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Set-TJRemoteAccess-P
 
 **현재 설치/롤백 스크립트는 PowerShell 구문 파서 및 Python 계약만 검증했다. 실제 실행 검증 전이므로 스냅샷 복원 가능한 폐기형 Win10/11 x64 VM 전용이다.**
 
-1. 개발 VM에서 소스 커밋 후 clean HEAD 확인, `tools/Build-TJRemoteAccess-ServicePreviewPackage.ps1`을 PowerShell에서 실행. 생성 `out\packages\TJ.RemoteAccess.ServicePreview-0.5.2-preview-win-x64.zip`과 out-of-band SHA-256을 별도로 검증.
+1. 개발 VM에서 소스 커밋 후 clean HEAD 확인, `tools/Build-TJRemoteAccess-ServicePreviewPackage.ps1`을 PowerShell에서 실행. 생성 `out\packages\TJ.RemoteAccess.ServicePreview-0.5.3-preview-win-x64.zip`과 out-of-band SHA-256을 별도로 검증.
 2. **관리자 권한으로** 격리 VM에 ZIP 전달 및 아래 설치:
 
 ```powershell

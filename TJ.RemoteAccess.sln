@@ -8,6 +8,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TJ.RemoteAccess.Viewer", "s
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TJ.RemoteAccess.Setup", "src\TJRemoteAccess.Core\TJ.RemoteAccess.Setup.csproj", "{38DC6C8F-73DD-4693-91D4-848B850AD1C5}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TJ.RemoteAccess.Installer", "src\TJRemoteAccess.Core\TJ.RemoteAccess.Installer.csproj", "{70F7B694-79D5-4450-AD49-393F6794A283}"
+EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TJ.RemoteAccess.RegressionTests", "tests\TJ.RemoteAccess.Lab.Tests.csproj", "{93603732-232F-4E82-8E33-D1C07F28330D}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TJ.RemoteAccess.M3.ControlService", "src\TJRemoteAccess.Core\TJ.RemoteAccess.M3.ControlService.csproj", "{B5A96A4F-8D3B-4021-AF4A-5F11B830705B}"
@@ -34,6 +36,10 @@ Global
 		{5E349C33-9C28-4EF3-9ACB-612A16344683}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{5E349C33-9C28-4EF3-9ACB-612A16344683}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{5E349C33-9C28-4EF3-9ACB-612A16344683}.Release|Any CPU.Build.0 = Release|Any CPU
+		{70F7B694-79D5-4450-AD49-393F6794A283}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{70F7B694-79D5-4450-AD49-393F6794A283}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{70F7B694-79D5-4450-AD49-393F6794A283}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{70F7B694-79D5-4450-AD49-393F6794A283}.Release|Any CPU.Build.0 = Release|Any CPU
 		{38DC6C8F-73DD-4693-91D4-848B850AD1C5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{38DC6C8F-73DD-4693-91D4-848B850AD1C5}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{38DC6C8F-73DD-4693-91D4-848B850AD1C5}.Release|Any CPU.ActiveCfg = Release|Any CPU

@@ -9,7 +9,7 @@
 - 인증서 로그인: 기존 포트 `15544`, 기존 Viewer별 인증서 방식 **유지**.
 - 간편 비밀번호 로그인: `15545` (TLS 별도 포트, 서버 기본 `15544 + 1`). **서버에서 Password access를 설정해야만 활성화**. 기본 비활성.
 - Server 동시 Viewer 3명, Controller 1명 제한 유지. Password 로그인은 **ViewOnly 기본값**; Server의 Password access 설정에서 원격 입력을 명시적으로 허용할 수 있다.
-- 비밀번호 12~128자, UTF-8 최대 256바이트, PBKDF2-SHA256 600,000 iterations+32-byte salt verifier만 서버 사용자 설정에 저장. Viewer 비밀번호 **저장하지 않음**. IP별 로그인 오류 5회/분 및 전체 20회/분 도달 시 2분 제한.
+- 비밀번호 6~128자, UTF-8 최대 256바이트, PBKDF2-SHA256 600,000 iterations+32-byte salt verifier만 서버 사용자 설정에 저장. Viewer 비밀번호 **저장하지 않음**. IP별 로그인 오류 5회/분 및 전체 20회/분 도달 시 2분 제한.
 - Server 인증서 SHA-256은 `%LOCALAPPDATA%\TJ.RemoteAccess\viewer-profiles.json`에 Host+Port별 저장. 공개 지문만 보존; 비밀번호나 Viewer 개인키를 저장하지 않음.
 - 최초 연결만 신뢰 확인, 이후 동일 Host:Port 접속은 저장된 핀으로 엄격 검증. 서버 인증서가 변경되면 **접속이 차단되는 것이 정상**. 기존 프로필을 삭제하고 새 서버 신원을 수동으로 재확인해야 한다.
 
@@ -33,7 +33,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Install-TJRemoteAcce
 ## Server PC: Password Access 활성화
 
 1. `TJ.RemoteAccess.Server.exe --allow-lan` 실행, 트레이 `TJ` 아이콘 우클릭 → **Password access...** 선택.
-2. 12자 이상 새 비밀번호 및 확인 입력. 필요한 경우에만 `Allow remote keyboard / mouse` 체크(기본은 보기 전용).
+2. 6자 이상 새 비밀번호 및 확인 입력. 필요한 경우에만 `Allow remote keyboard / mouse` 체크(기본은 보기 전용).
 3. **Set / change password** 선택. 서버가 이미 접속 대기 중이라면 현재 TLS 접속을 종료하고 자동으로 다시 시작해 새 비밀번호 전용 포트(`기본 15545`)를 적용한다. 중지 상태였다면 트레이에서 `Start listening`.
 4. 첫 연결 Viewer가 표시한 64자리 SHA-256 지문을 비교하려면 Server의 `Password access...` → `Copy Server pin`에서 확인.
 5. 비밀번호 접속을 중단하려면 `Disable password`. 기존 비밀번호 세션은 철회되며, 활성 Server는 자동으로 TLS 리스너를 다시 시작한다.
@@ -64,7 +64,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Install-TJRemoteAcce
 | ID | 확인 항목 | 기대 결과 |
 |---|---|---|
 | Q01 | Server Password Access 기본 상태 | 기본 Disabled, 별도 TLS password 포트 미개방 |
-| Q02 | Server에서 12자 이상 비밀번호 설정 | 별도 포트 15545 TLS 활성, 재시작 요구 없이 적용 |
+| Q02 | Server에서 6자 이상 비밀번호 설정 | 별도 포트 15545 TLS 활성, 재시작 요구 없이 적용 |
 | Q03 | 신규 Viewer에서 IP+Password만 입력 | Viewer 인증서 없이 최초 서버 지문 확인 화면 표시 |
 | Q04 | 최초 지문 확인에서 **No** | 비밀번호 미전송, 서버 프로필 미등록 |
 | Q05 | Server PC에서 SHA 지문 확인 후 **Yes** | 2차 TLS 연결, 비밀번호 인증 후 영상 수신 |

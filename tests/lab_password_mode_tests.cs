@@ -66,13 +66,34 @@ public sealed class LabPasswordModeTests : IDisposable
 
     [Theory]
     [InlineData("")]
-    [InlineData("short")]
+    [InlineData("tiny")]
     [InlineData("tab\tcharacter")]
     [InlineData("a line\nwith break")]
     public void WeakOrControlCharacterPasswordsAreRejected(string secret)
     {
         Assert.False(LabPasswordAccess.ValidPassword(secret));
         Assert.Throws<InvalidDataException>(() => Store.Configure(secret, false));
+    }
+
+    [Fact]
+    public void SixCharacterPasswordIsAcceptedButFiveCharacterPasswordIsRejected()
+    {
+        const string six = "Ab12!x";
+        const string five = "Ab12!";
+        Assert.True(LabPasswordAccess.ValidPassword(six));
+        Assert.True(LabWire.ValidPassword(six));
+        Assert.False(LabPasswordAccess.ValidPassword(five));
+        Assert.False(LabWire.ValidPassword(five));
+        var store = Store;
+        store.Configure(six, canControl: false);
+        Assert.True(store.Verify(six));
+        Assert.False(store.Verify(five));
+        byte[] payload = LabWire.PasswordLogin(six);
+        Assert.Equal(7, payload.Length); // one protocol byte + 6 ASCII bytes
+        Assert.Equal(six, LabWire.ParsePasswordLogin(payload));
+        Assert.Throws<InvalidDataException>(() => LabWire.PasswordLogin(five));
+        Assert.Throws<InvalidDataException>(() =>
+            LabWire.ParsePasswordLogin(new byte[] { LabWire.Version, 65, 66, 49, 50, 33 }));
     }
 
     [Fact]
@@ -95,7 +116,7 @@ public sealed class LabPasswordModeTests : IDisposable
         Assert.True(body.Length + 1 <= LabWire.MaxPasswordPacketBytes);
         body[0] = 99;
         Assert.Throws<InvalidDataException>(() => LabWire.ParsePasswordLogin(body));
-        Assert.Throws<InvalidDataException>(() => LabWire.PasswordLogin("short"));
+        Assert.Throws<InvalidDataException>(() => LabWire.PasswordLogin("tiny"));
         Assert.Throws<InvalidDataException>(() => LabWire.ParsePasswordLogin(new byte[260]));
     }
 

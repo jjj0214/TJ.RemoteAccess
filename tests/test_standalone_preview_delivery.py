@@ -27,9 +27,9 @@ class StandalonePreviewContracts(unittest.TestCase):
         products = ("Server", "Viewer", "Setup", "M3.Agent", "M3.ControlService")
         for component in products:
             root = ET.parse(SRC / f"TJ.RemoteAccess.{component}.csproj").getroot()
-            self.assertEqual("0.5.2-preview", root.findtext("./PropertyGroup/Version"))
-            self.assertEqual("0.5.2.0", root.findtext("./PropertyGroup/AssemblyVersion"))
-            self.assertEqual("0.5.2.0", root.findtext("./PropertyGroup/FileVersion"))
+            self.assertEqual("0.5.3-preview", root.findtext("./PropertyGroup/Version"))
+            self.assertEqual("0.5.3.0", root.findtext("./PropertyGroup/AssemblyVersion"))
+            self.assertEqual("0.5.3.0", root.findtext("./PropertyGroup/FileVersion"))
 
     def test_standalone_settings_isolate_lab_and_tightvnc(self):
         settings = (SRC / "LabCertificates.cs").read_text(encoding="utf-8-sig")
@@ -114,7 +114,7 @@ class StandalonePreviewContracts(unittest.TestCase):
         self.assertIn('<Compile Include="LabServerTray.cs" />', preview_project)
         self.assertNotIn('<Compile Include="LabServerTray.cs" />', lab_project)
         self.assertIn('<Compile Include="M3DesktopEnrollment.cs" />', preview_project)
-        self.assertIn('<Version>0.5.2-preview</Version>', preview_project)
+        self.assertIn('<Version>0.5.3-preview</Version>', preview_project)
 
     def test_offline_installers_accept_all_bundled_readonly_tools(self):
         builder = (TOOLS / "Build-TJRemoteAccess-Preview-OfflinePackage.ps1").read_text(encoding="utf-8-sig")
@@ -127,8 +127,8 @@ class StandalonePreviewContracts(unittest.TestCase):
             self.assertIn(file_name, offline)
         self.assertIn("Measure-TJRemoteAccess-Preview.ps1", service_builder)
         self.assertIn("Measure-TJRemoteAccess-Preview.ps1", service_installer)
-        self.assertIn("0.5.2-preview", builder)
-        self.assertIn("0.5.2-preview", service_builder)
+        self.assertIn("0.5.3-preview", builder)
+        self.assertIn("0.5.3-preview", service_builder)
 
 if __name__ == "__main__":
     unittest.main()

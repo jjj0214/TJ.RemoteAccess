@@ -10,6 +10,7 @@ public sealed class TJRemoteAccessPowerShellParseTests
     [Theory]
     [InlineData("Install-TJRemoteAccess-Preview.ps1")]
     [InlineData("Build-TJRemoteAccess-Preview-OfflinePackage.ps1")]
+    [InlineData("Build-TJRemoteAccess-Preview-GuiPackage.ps1")]
     [InlineData("Install-TJRemoteAccess-Preview-Offline.ps1")]
     [InlineData("Test-TJRemoteAccess-Preview.ps1")]
     [InlineData("Uninstall-TJRemoteAccess-Preview.ps1")]

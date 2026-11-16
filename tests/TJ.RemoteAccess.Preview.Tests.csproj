@@ -21,6 +21,8 @@
     <Compile Include="preview_isolation_tests.cs" />
     <Compile Include="preview_tray_tests.cs" />
     <Compile Include="preview_quick_password_tests.cs" />
+    <Compile Include="preview_installer_tests.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\PreviewInstallerCore.cs" />
     <Compile Include="..\\src\\TJRemoteAccess.Core\\LabViewerProfiles.cs" />
     <Compile Include="..\\src\\TJRemoteAccess.Core\\LabProtocol.cs" />
     <Compile Include="..\\src\\TJRemoteAccess.Core\\LabQuickPasswordTrust.cs" />

@@ -319,7 +319,7 @@ private LabViewerProfile? SelectedProfile =>
             if (quick is not null)
             {
                 if (!LabWire.ValidPassword(quick.Password))
-                    throw new InvalidDataException("Enter a valid Server password (12..128 printable characters).");
+                    throw new InvalidDataException("Enter a valid Server password (6..128 printable characters).");
                 var existing = _profileStore.FindPasswordEndpoint(quick.Host, quick.Port);
                 firstUse = existing is null;
                 profile = existing ?? new LabViewerProfile {

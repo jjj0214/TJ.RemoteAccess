@@ -1,0 +1,70 @@
+# GPL-2.0-or-later
+# Unsigned PREVIEW CI artifact only. No GitHub Release, code signing,
+# services, MSI, firewall changes, or deployment side effects.
+name: TJ.RemoteAccess Preview GUI Installer
+
+on:
+  push:
+    branches:
+      - feature/chatgpt-m2-engine-foundation
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/**'
+      - 'docs/**'
+      - 'TJ.RemoteAccess.sln'
+      - '.github/workflows/preview-installer.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-preview-installer:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout exact GPL source
+        uses: actions/checkout@v4
+
+      - name: Install .NET 9 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Verify standalone Preview Release compilation
+        shell: pwsh
+        run: dotnet build .\TJ.RemoteAccess.sln -c Release --nologo
+
+      - name: Test Preview installer and password safety
+        shell: pwsh
+        run: dotnet test .\tests\TJ.RemoteAccess.Preview.Tests.csproj -c Release --nologo
+
+      - name: Run legacy Lab/Agent regression tests
+        shell: pwsh
+        run: dotnet test .\tests\TJ.RemoteAccess.Lab.Tests.csproj -c Release --nologo
+
+      - name: Python delivery policy tests
+        shell: pwsh
+        run: python -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Build complete offline GUI installer bundle
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\tools\Build-TJRemoteAccess-Preview-GuiPackage.ps1 -Version '0.5.3-preview'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Stage one-level installer download for users
+        shell: pwsh
+        run: |
+          Expand-Archive -LiteralPath .\out\packages\TJ.RemoteAccess-0.5.3-preview-GUI-Installer-win-x64.zip -DestinationPath .\out\packages\gui-installer-download -Force
+          if (-not (Test-Path .\out\packages\gui-installer-download\TJ.RemoteAccess.Installer.exe)) { throw 'Installer.exe missing after extracting GUI bundle.' }
+
+      - name: Upload unsigned double-click installer package
+        uses: actions/upload-artifact@v4
+        with:
+          name: TJ.RemoteAccess-0.5.3-preview-GUI-Installer-win-x64
+          path: out/packages/gui-installer-download/
+          if-no-files-found: error
+          retention-days: 14

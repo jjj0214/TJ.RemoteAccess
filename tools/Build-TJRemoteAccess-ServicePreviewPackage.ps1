@@ -10,7 +10,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^[A-Za-z0-9.+-]{1,40}$')]
-    [string]$Version = '0.5.2-preview'
+    [string]$Version = '0.5.3-preview'
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
