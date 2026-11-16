@@ -48,6 +48,19 @@ for concrete implementation blockers. The static audit never approves deployment
   certificate-bound `service-host enable --confirm-local-owner` enrollment are
   required. Default is status-only, and a Job object kills the Server if its
   user Agent dies. Winlogon, lock screen, UAC/secure desktop are **denied**.
+- **0.5.4-preview compact offline installer (new parallel delivery):**
+  Native Inno Setup 6 produces ONE install EXE (no managed Installer runtime).
+  Server/Viewer/Setup are .NET 10 framework-dependent, each apphost searches
+  ONLY ../Runtime, and the Microsoft .NET 10.0.15 LTS WindowsDesktop runtime
+  is embedded ONCE under the common Runtime folder. The private runtime ZIP
+  is authenticated against Microsoft's official SHA-512 metadata.
+  Component choices: Server+Setup, Viewer+Setup, Both; GPL corresponding
+  source.zip is embedded in the EXE. Per-user install, update/uninstall, and
+  LocalAppData TLS/profile preservation are tested in a dedicated Windows
+  compact-installer.yml CI job. The old 0.5.3 installer is retained as fallback.
+  New compact CI requires .NET 10 SDK/Inno Setup 6; the existing local machine
+  currently only has SDK 9.0.318, so it validates legacy paths separately.
+  Instructions: docs/COMPACT_INSTALLER_0_5_4_20261116_KO.md.
 - Standalone **0.5.3-preview graphical installer**:
   `TJ.RemoteAccess.Installer.exe` is self-contained for Windows x64,
   double-clickable (no PowerShell or .NET SDK needed on the target PC).
@@ -80,7 +93,7 @@ for concrete implementation blockers. The static audit never approves deployment
   production security, Win10/11 compatibility or unattended/secure desktop
   behavior. The standalone build is a **PREVIEW, NOT a finished TightVNC
   replacement**. Do not deploy at customer facilities.
-- Release build of Product and Lab solutions and C++ native test projects, Windows xUnit **168/168**, product-preview xUnit **42/42**, and Python unittest all passed (2026-11-16). Windows PowerShell AST parsing of installer scripts passed; actual installer/SCM execution, GUI acceptance, code signing and MSI are **not tested**.
+- Release build of Product and Lab solutions and C++ native test projects, Windows xUnit **170/170**, product-preview xUnit **42/42**, and Python unittest all passed (2026-11-16). Windows PowerShell AST parsing of installer scripts passed; actual installer/SCM execution, GUI acceptance, code signing and MSI are **not tested**.
 - Windows test gates and initial commands:
   `docs/STANDALONE_PREVIEW_BUILD_TEST_20261116_KO.md`. Tray-specific
   test steps and 0.5.1-preview acceptance checklist:

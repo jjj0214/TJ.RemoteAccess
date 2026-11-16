@@ -1,0 +1,131 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""Compact native installer regressions.
+
+Contract checks intentionally do NOT pretend to install native software.
+Real Windows .NET 10 AppHost/installer install-update-uninstall smoke runs
+only in the compact-installer.yml GitHub-hosted Windows job.
+"""
+from pathlib import Path
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "tools" / "Build-TJRemoteAccess-CompactInstaller.ps1"
+ISS = ROOT / "tools" / "TJ.RemoteAccess.iss"
+CI = ROOT / ".github" / "workflows" / "compact-installer.yml"
+
+
+class CompactNativeInstallerContract(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.script = SCRIPT.read_text(encoding="utf-8-sig")
+        cls.iss = ISS.read_text(encoding="utf-8-sig")
+        cls.ci = CI.read_text(encoding="utf-8-sig")
+
+    def test_one_native_executable_no_self_contained_app_duplication(self):
+        for token in (
+            "Inno Setup creates", "OutputBaseFilename=TJ.RemoteAccess-",
+            "Compression=lzma2", "SolidCompression=yes",
+            "PrivilegesRequired=lowest", "DefaultDirName={localappdata}",
+            "AppId={{", "UninstallDisplayName=", "[Components]",
+            "Uninstall TJ.RemoteAccess", "[Files]",
+        ):
+            self.assertIn(token, self.iss)
+        self.assertIn("TJ.RemoteAccess.iss", self.script)
+        self.assertIn("-p:TargetFramework=net10.0-windows", self.script)
+        self.assertIn("'--self-contained','false'", self.script)
+        self.assertIn("-p:PublishSingleFile=false", self.script)
+        self.assertIn("-p:AppHostDotNetSearch=AppRelative", self.script)
+        self.assertIn("-p:AppHostRelativeDotNet=../Runtime", self.script)
+        self.assertNotIn("-p:PublishTrimmed=true", self.script)
+        self.assertNotIn("-p:PublishReadyToRun=true", self.script)
+        self.assertNotIn("PublishSingleFile=true", self.script)
+        self.assertNotIn("dotnet publish", self.iss)
+
+    def test_desktop_runtime_is_embedded_once_and_never_global_installed(self):
+        self.assertEqual(
+            self.iss.count('Source: "{#RepoRoot}\\out\\compact-publish\\Runtime\\*"'), 1)
+        for component in ("Server", "Viewer", "Setup"):
+            self.assertIn("out\\compact-publish\\" + component + "\\*", self.iss)
+        self.assertIn("Name: \"runtime\"", self.iss)
+        self.assertIn("Flags: fixed", self.iss)
+        for token in (
+            "WindowsDesktop", "Microsoft.NETCore.App",
+            "hostfxr.dll", "Microsoft.WindowsDesktop.App.runtimeconfig.json",
+            "$runtimeFiles", "Microsoft .NET Windows Desktop Runtime",
+        ):
+            self.assertIn(token, self.script)
+        for forbidden in ("choco install", "winget install", "Install-Module",
+                          "New-NetFirewallRule", "Stop-Service", "Remove-Item $env:LOCALAPPDATA"):
+            self.assertNotIn(forbidden, self.script)
+
+    def test_microsoft_runtime_is_fully_pinned_and_verified(self):
+        for token in (
+            "RuntimeVersion = '10.0.15'",
+            "https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json",
+            "windowsdesktop-runtime-win-x64.zip",
+            "'win-x64'",
+            "Get-TJRemoteAccessFileSha256.ps1",
+            "Sha512-File",
+            "SHA512",
+            "$actualSha512",
+            "OrdinalIgnoreCase",
+            "runtimeSha512",
+            "sourceRevision",
+            "runtime-provenance.json",
+        ):
+            self.assertIn(token, self.script)
+        self.assertIn("Microsoft .NET Windows Desktop Runtime", self.script)
+
+        self.assertNotIn("Invoke-Expression", self.script)
+        self.assertNotIn("curl | bash", self.script)
+
+    def test_private_runtime_verified_before_source_build(self):
+        # Test accesses a LOCAL private runtime, not an ordinary system .NET install.
+        for token in (
+            "$localSetup", "'service-host','status'",
+            "DOTNET_ROOT_X64", "missing-global-dotnet",
+            "Run-Checked 'Setup service-host status (read only)'",
+            "$config.runtimeOptions.tfm",
+        ):
+            self.assertIn(token, self.script)
+        self.assertIn("source.zip", self.iss)
+        self.assertIn("GPL-Source", self.iss)
+        self.assertIn("THIRD_PARTY_NOTICES.md", self.iss)
+        self.assertIn("git -C $root archive", self.script)
+
+
+    def test_no_tls_credential_or_tightvnc_mutations(self):
+        for token in ("PrivilegesRequired=lowest", "AppPublisherURL=",
+                      "CloseApplications=yes", "RestartApplications=no"):
+            self.assertIn(token, self.iss)
+        for forbidden in ("DeleteFile", "DelTree", "Remove-Item -LiteralPath $env:LOCALAPPDATA",
+                          "TightVNC.exe", "sc.exe", "netsh advfirewall", "certutil -delstore"):
+            self.assertNotIn(forbidden, self.iss)
+            self.assertNotIn(forbidden, self.script)
+        self.assertIn("GPL-Source", self.iss)
+
+    def test_actions_perform_real_installer_e2e_and_upload_artifact(self):
+        for token in (
+            "on:", "windows-latest", "10.0.x", "Inno Setup",
+            "Build-TJRemoteAccess-CompactInstaller.ps1",
+            "0.5.4-preview", "10.0.15",
+            "silent install, upgrade, runtime resolution, uninstall smoke",
+            "/VERYSILENT", "/COMPONENTS=viewer,setup,runtime",
+            "/COMPONENTS=server,viewer,setup,runtime",
+            "DOTNET_ROOT_X64", "service-host",
+            "GPL-Source", "unins000.exe",
+            "preserve-user-configuration", "actions/upload-artifact@v4",
+            "if-no-files-found: error", "compact-size-report.json",
+            "runtime-provenance.json",
+        ):
+            self.assertIn(token.lower(), self.ci.lower())
+        self.assertNotIn("dotnet build .\\TJ.RemoteAccess.sln -c Release --nologo --no-restore", self.ci)
+
+    def test_ps_parser_regression_includes_new_builder(self):
+        script = (ROOT / "tests/preview_powershell_parse_tests.cs").read_text(
+            encoding="utf-8-sig")
+        self.assertIn("Build-TJRemoteAccess-CompactInstaller.ps1", script)
+
+
+if __name__ == "__main__":
+    unittest.main()

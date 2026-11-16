@@ -1,0 +1,161 @@
+# Native one-EXE installer + private shared .NET 10 Desktop Runtime gate.
+# Legacy 0.5.3 Preview installer remains as a recovery path.
+name: TJ.RemoteAccess Compact Installer
+
+on:
+  push:
+    branches:
+      - feature/chatgpt-m2-engine-foundation
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/**'
+      - 'docs/**'
+      - '.github/workflows/compact-installer.yml'
+      - 'TJ.RemoteAccess.sln'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compact-windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact GPL source
+        uses: actions/checkout@v4
+
+      - name: Install .NET 9 for legacy tests and .NET 10 LTS for compact apps
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            9.0.x
+            10.0.x
+
+      - name: Compile previous Preview baseline
+        shell: pwsh
+        run: dotnet build .\TJ.RemoteAccess.sln -c Release --nologo
+
+      - name: Test Preview server, Viewer, TLS and installer
+        shell: pwsh
+        run: |
+          dotnet test .\tests\TJ.RemoteAccess.Preview.Tests.csproj -c Release --nologo --logger 'trx;LogFileName=compact-preview.trx' --results-directory .\out\test-results
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Test Lab, Agent and security excluding interactive-desktop E2E
+        shell: pwsh
+        run: |
+          dotnet test .\tests\TJ.RemoteAccess.Lab.Tests.csproj -c Release --nologo --filter 'Category!=InteractiveWindowsDesktop' --logger 'trx;LogFileName=compact-lab.trx' --results-directory .\out\test-results
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Validate portable Python contracts
+        shell: pwsh
+        run: python -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Ensure Inno Setup 6 native installer compiler
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path -LiteralPath $iscc)) {
+            choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw 'Inno Setup 6 installation failed' }
+          }
+          if (-not (Test-Path -LiteralPath $iscc)) { throw 'ISCC.exe missing' }
+
+      - name: Compile single native EXE + one private Microsoft Desktop Runtime
+        shell: powershell
+        run: |
+          & .\tools\Build-TJRemoteAccess-CompactInstaller.ps1 -Version '0.5.4-preview' -RuntimeVersion '10.0.15'
+          if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Real silent install, upgrade, runtime resolution, uninstall smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = (Resolve-Path '.\out\compact-dist\TJ.RemoteAccess-0.5.4-preview-Compact-Setup-win-x64.exe').Path
+          $installed = Join-Path $env:RUNNER_TEMP 'TJRA-Compact-Install-Check'
+          $logs = Join-Path $env:RUNNER_TEMP 'TJRA-Compact-Install-Logs'
+          [IO.Directory]::CreateDirectory($logs) | Out-Null
+          $settings = Join-Path $env:LOCALAPPDATA 'TJ.RemoteAccess'
+          [IO.Directory]::CreateDirectory($settings) | Out-Null
+          $sentinel = Join-Path $settings 'ci_preservation_test.txt'
+          [IO.File]::WriteAllText($sentinel,'must-preserve-user-configuration')
+          function Run-Installer([string[]]$arguments) {
+            $p = Start-Process -FilePath $exe -ArgumentList $arguments -Wait -PassThru
+            if ($p.ExitCode -ne 0) { throw "Setup failed, exit $($p.ExitCode)" }
+          }
+          Run-Installer @('/SP-','/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',
+            "/DIR=$installed",'/COMPONENTS=viewer,setup,runtime',"/LOG=$(Join-Path $logs 'viewer.log')")
+          foreach ($file in @('Viewer\TJ.RemoteAccess.Viewer.exe','Setup\TJ.RemoteAccess.Setup.exe',
+            'Runtime\dotnet.exe','GPL-Source\source.zip')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $installed $file) -PathType Leaf)) {
+              throw "Viewer-only installation missing $file"
+            }
+          }
+          if (Test-Path (Join-Path $installed 'Server\TJ.RemoteAccess.Server.exe')) {
+            throw 'Viewer-only selection unexpectedly installed Server'
+          }
+          $prior = $env:DOTNET_ROOT
+          $priorX = $env:DOTNET_ROOT_X64
+          try {
+            $env:DOTNET_ROOT = Join-Path $installed 'invalid-global-dotnet'
+            $env:DOTNET_ROOT_X64 = $env:DOTNET_ROOT
+            $p = Start-Process -FilePath (Join-Path $installed 'Setup\TJ.RemoteAccess.Setup.exe') -ArgumentList @('service-host','status') -PassThru -Wait -NoNewWindow
+            if ($p.ExitCode -ne 0) { throw 'Installed apphost failed to discover its PRIVATE runtime' }
+          } finally {
+            $env:DOTNET_ROOT = $prior
+            $env:DOTNET_ROOT_X64 = $priorX
+          }
+          Run-Installer @('/SP-','/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',
+            "/DIR=$installed",'/COMPONENTS=server,viewer,setup,runtime',"/LOG=$(Join-Path $logs 'update.log')")
+          if (-not (Test-Path (Join-Path $installed 'Server\TJ.RemoteAccess.Server.exe'))) {
+            throw 'Upgrade did not install Server'
+          }
+          if ((Get-ChildItem (Join-Path $installed 'Runtime\shared\Microsoft.WindowsDesktop.App') -Directory).Count -ne 1) {
+            throw 'Expected exactly ONE .NET 10 WindowsDesktop runtime'
+          }
+          if ([IO.File]::ReadAllText($sentinel) -ne 'must-preserve-user-configuration') {
+            throw 'Installer overwrote user configuration'
+          }
+          $uninstall = Join-Path $installed 'unins000.exe'
+          if (-not (Test-Path -LiteralPath $uninstall -PathType Leaf)) { throw 'Uninstall EXE missing' }
+          $p = Start-Process -FilePath $uninstall -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=$(Join-Path $logs 'uninstall.log')") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Uninstall failed: $($p.ExitCode)" }
+          if ([IO.File]::ReadAllText($sentinel) -ne 'must-preserve-user-configuration') {
+            throw 'Uninstall damaged user settings'
+          }
+          Remove-Item -LiteralPath $sentinel -Force
+          Write-Host 'COMPACT INSTALL / UPDATE / UNINSTALL SMOKE PASS'
+
+      - name: Verify runtime provenance and package-size report
+        shell: pwsh
+        run: |
+          $r = Get-Content .\out\compact-dist\compact-size-report.json -Raw | ConvertFrom-Json
+          $p = Get-Content .\out\compact-dist\runtime-provenance.json -Raw | ConvertFrom-Json
+          if ($r.sourceRevision -ne $env:GITHUB_SHA) { throw 'Source revision mismatch' }
+          if ($p.runtimeVersion -ne '10.0.15') { throw 'Wrong runtime patch' }
+          if ($r.bytes -lt 1000000) { throw 'Implausible installer size' }
+          Write-Host "Installer size: $($r.bytes) bytes"
+          Write-Host "One shared runtime: $($r.runtimeBytes) bytes"
+
+      - name: Upload test diagnostics even if failed
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TJRA-Compact-Tests
+          path: out/test-results/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload compact one-EXE for final PC validation
+        uses: actions/upload-artifact@v4
+        with:
+          name: TJ.RemoteAccess-0.5.4-preview-Compact-Setup-win-x64
+          path: |
+            out/compact-dist/TJ.RemoteAccess-0.5.4-preview-Compact-Setup-win-x64.exe
+            out/compact-dist/TJ.RemoteAccess-0.5.4-preview-Compact-Setup-win-x64.exe.sha256
+            out/compact-dist/compact-size-report.json
+            out/compact-dist/runtime-provenance.json
+          if-no-files-found: error
+          retention-days: 14
