@@ -49,10 +49,28 @@ jobs:
           dotnet test .\tests\TJ.RemoteAccess.Lab.Tests.csproj -c Release --no-build --nologo --filter 'FullyQualifiedName~LabTlsTests' --logger 'trx;LogFileName=lab-tls.trx' --results-directory .\out\test-results
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Validate Agent IPC and session security on Windows
+      - name: Validate Agent inherited handle subprocess IPC
         shell: pwsh
         run: |
-          dotnet test .\tests\TJ.RemoteAccess.Lab.Tests.csproj -c Release --no-build --nologo --filter 'FullyQualifiedName~M3AgentExternalProcessTests|FullyQualifiedName~M3AgentPipeEndToEndTests|FullyQualifiedName~M3IpcSecurityTests|FullyQualifiedName~M3SessionLifecycleTests' --logger 'trx;LogFileName=m3-agent.trx' --results-directory .\out\test-results
+          dotnet test .\tests\TJ.RemoteAccess.Lab.Tests.csproj -c Release --no-build --nologo --filter 'FullyQualifiedName~M3AgentExternalProcessTests' --logger 'trx;LogFileName=m3-agent-subprocess.trx' --results-directory .\out\test-results
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Validate Agent same-process pipe HMAC protocol
+        shell: pwsh
+        run: |
+          dotnet test .\tests\TJ.RemoteAccess.Lab.Tests.csproj -c Release --no-build --nologo --filter 'FullyQualifiedName~M3AgentPipeEndToEndTests' --logger 'trx;LogFileName=m3-agent-pipe.trx' --results-directory .\out\test-results
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Validate restricted named-pipe Windows token ACL
+        shell: pwsh
+        run: |
+          dotnet test .\tests\TJ.RemoteAccess.Lab.Tests.csproj -c Release --no-build --nologo --filter 'FullyQualifiedName~M3IpcSecurityTests' --logger 'trx;LogFileName=m3-ipc-acl.trx' --results-directory .\out\test-results
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Validate Agent lock and rebind lifecycle
+        shell: pwsh
+        run: |
+          dotnet test .\tests\TJ.RemoteAccess.Lab.Tests.csproj -c Release --no-build --nologo --filter 'FullyQualifiedName~M3SessionLifecycleTests' --logger 'trx;LogFileName=m3-session-lifecycle.trx' --results-directory .\out\test-results
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Validate PowerShell syntax for offline packaging
