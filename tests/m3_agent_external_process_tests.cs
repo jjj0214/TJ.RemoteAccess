@@ -8,6 +8,7 @@ using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Principal;
+using System.Runtime.CompilerServices;
 using System.Text;
 using TJ.RemoteAccess.M3;
 using Xunit;
@@ -88,19 +89,40 @@ public sealed class M3AgentExternalProcessTests
     [DllImport("kernel32.dll")]
     private static extern bool CloseHandle(IntPtr handle);
 
+    private static string FindCompleteAgentRuntime([CallerFilePath] string sourceFile = "")
+    {
+        string root = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(sourceFile)!, ".."));
+        string projectOutput = Path.Combine(root, "src", "TJRemoteAccess.Core", "bin",
+            "Release", "net9.0-windows");
+        foreach (string folder in new[] { projectOutput, AppContext.BaseDirectory })
+        {
+            string prefix = Path.Combine(folder, "TJ.RemoteAccess.M3.Agent");
+            if (File.Exists(prefix + ".exe") && File.Exists(prefix + ".dll") &&
+                File.Exists(prefix + ".runtimeconfig.json") &&
+                File.Exists(prefix + ".deps.json"))
+                return prefix + ".exe";
+        }
+        throw new FileNotFoundException(
+            "The Agent's complete Release runtime (.exe, .dll, .deps.json, " +
+            ".runtimeconfig.json) was not found. Build TJ.RemoteAccess.sln before testing.");
+    }
+
+    // Requires an actual unlocked, interactive user console. GitHub-hosted
+    // Windows runners do not promise the desktop/logon-token environment
+    // required by a real child Agent; never treat headless CI as acceptance.
+    // The dedicated JJJ Dev interactive Windows test runs this test unchanged.
     [Fact]
+    [Trait("Category", "InteractiveWindowsDesktop")]
     public async Task LaunchedAgentAuthenticatesUsingOnlyExplicitlyInheritedKeyHandle()
     {
         if (!OperatingSystem.IsWindows() || Process.GetCurrentProcess().SessionId == 0)
             return;
-        string projectRoot = Path.GetFullPath(Path.Combine(
-            AppContext.BaseDirectory, "..", "..", "..", ".."));
-        // JJJ Dev runs test/project builds in an isolated temporary output
-        // directory. Prefer the Agent apphost emitted alongside testhost.
-        string agentExe = Path.Combine(AppContext.BaseDirectory, "TJ.RemoteAccess.M3.Agent.exe");
-        if (!File.Exists(agentExe))
-            agentExe = Path.Combine(projectRoot, "src", "TJRemoteAccess.Core",
-                "bin", "Release", "net9.0-windows", "TJ.RemoteAccess.M3.Agent.exe");
+        // The test project references the Agent with ReferenceOutputAssembly=false.
+        // Some dotnet test runners copy only its apphost into the TEST bin,
+        // omitting .runtimeconfig.json/.deps.json. That executable exits
+        // before joining the private pipe. Prefer the Agent project's
+        // COMPLETE runtime folder, then any fully self-contained test copy.
+        string agentExe = FindCompleteAgentRuntime();
         Assert.True(File.Exists(agentExe), "Agent project must build before IPC acceptance.");
 
         string instance = Guid.NewGuid().ToString("N");

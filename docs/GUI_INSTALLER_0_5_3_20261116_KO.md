@@ -124,6 +124,16 @@ Build-TJRemoteAccess-Preview-OfflinePackage.ps1:77
 
 **검증 범위:** Windows 개발 PC에서 Cmdlet 부재 상황을 재현한 실제 오프라인 빌더 통합 테스트를 통과했다. 그러나 GitHub Actions 최신 Run에서 실제 self-contained GUI 빌드·업로드 성공까지 확인해야 완전 해결로 판정할 수 있다.
 
+## GitHub Actions Agent 실기 시험 분리 (2026-11-16)
+
+공개 GitHub `windows-latest` Runner에서는 실제 로그인된 Windows 데스크톱, 사용자의 logon SID, 자식 Agent 런타임과 Win32 상속 핸들 환경을 보장하지 않는다. `M3AgentExternalProcessTests`는 실제 Agent 프로세스를 실행하므로 이 시험을 공개 Runner에서 실행하면 테스트 환경에 따른 실패가 발생할 수 있다. 단순히 성공으로 오판하지 않기 위해 **별도 대화형 Windows PC 게이트**로 분리했다.
+
+- 테스트 소스의 `[Trait("Category", "InteractiveWindowsDesktop")]`로 별도 게이트를 명시하고, Agent `.exe/.dll/.deps.json/.runtimeconfig.json` 전체가 존재하는 올바른 출력 경로를 사용한다.
+- 일반 Preview Actions는 해당 테스트가 빌드되고 **발견되는지 확인**한다. 전체 Lab 회귀 실행에서는 `Category!=InteractiveWindowsDesktop` 필터를 적용한다.
+- 나머지 Windows 파이프 HMAC 인증, 토큰 SID/ACL, 세션 수명주기, TLS 인증, PS 구문 및 Preview 테스트는 계속 실제 실행한다. Windows Core CI와 Ubuntu Core CI의 CMake/Python도 기존대로 실제 실행한다.
+- **필수 별도 수용 게이트:** JJJ Dev의 실제 로그온된 Windows PC에서 `tests/TJ.RemoteAccess.Lab.Tests.csproj`를 Release로 실행하여 **169개 전체 테스트 PASS**를 확인한다. 실제 Windows Service LocalSystem → Agent → Server 실기 수용은 여전히 별도다.
+- GitHub Actions가 Success여도 위 실제 데스크톱 게이트 및 고객 PC GUI 설치는 자동 완료를 의미하지 않는다.
+
 ## 개발자/CI 패키지 생성
 
 테스트 완료 후 **깨끗한 Git HEAD**에서만:

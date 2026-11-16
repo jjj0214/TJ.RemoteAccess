@@ -111,6 +111,21 @@ class GuiPreviewInstallerDelivery(unittest.TestCase):
         installer = (SRC / "PreviewInstallerCore.cs").read_text(encoding="utf-8-sig")
         self.assertIn('"Get-TJRemoteAccessFileSha256.ps1"', installer)
 
+    def test_interactive_agent_test_is_explicitly_separate_from_headless_ci(self):
+        source = (ROOT / "tests/m3_agent_external_process_tests.cs").read_text(
+            encoding="utf-8-sig")
+        workflow = (ROOT / ".github/workflows/preview-installer.yml").read_text(
+            encoding="utf-8-sig")
+        self.assertIn('[Trait("Category", "InteractiveWindowsDesktop")]', source)
+        self.assertIn("FindCompleteAgentRuntime", source)
+        self.assertIn('File.Exists(prefix + ".runtimeconfig.json")', source)
+        self.assertIn("Require dedicated interactive Windows Agent acceptance", workflow)
+        self.assertIn("LaunchedAgentAuthenticatesUsingOnlyExplicitlyInheritedKeyHandle", workflow)
+        self.assertIn("Category!=InteractiveWindowsDesktop", workflow)
+        self.assertIn("Validate Agent same-process pipe HMAC protocol", workflow)
+        self.assertIn("Validate restricted named-pipe Windows token ACL", workflow)
+        self.assertIn("Validate Agent lock and rebind lifecycle", workflow)
+
     def test_original_offline_script_now_has_streaming_progress(self):
         original = (TOOLS / "Install-TJRemoteAccess-Preview-Offline.ps1").read_text(
             encoding="utf-8-sig")
