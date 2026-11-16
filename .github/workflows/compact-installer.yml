@@ -6,6 +6,7 @@ on:
   push:
     branches:
       - feature/chatgpt-m2-engine-foundation
+      - feature/chatgpt-compact-native-verify
     paths:
       - 'src/**'
       - 'tests/**'
@@ -164,6 +165,21 @@ jobs:
           Remove-Item -LiteralPath $sentinel -Force
           Write-Host 'COMPACT INSTALL / UPDATE / UNINSTALL SMOKE PASS'
 
+      - name: Audit real compact installer component and license paths
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'TJRA-Compact-Install-Check'
+          if (Test-Path -LiteralPath (Join-Path $root 'Runtime')) {
+            throw 'Uninstaller left shared runtime behind.'
+          }
+          $source = Join-Path $PWD 'out\compact-dist\source.zip'
+          $notices = Join-Path $PWD 'THIRD_PARTY_NOTICES.md'
+          if (-not (Test-Path -LiteralPath $source -PathType Leaf) -or
+              -not (Test-Path -LiteralPath $notices -PathType Leaf)) {
+            throw 'GPL corresponding source or third-party notices missing.'
+          }
+          Write-Host 'Native installer uninstall and GPL source-presence verified.'
+
       - name: Verify runtime provenance and package-size report
         shell: pwsh
         run: |
@@ -183,6 +199,7 @@ jobs:
           path: |
             out/test-results/
             out/compact-ci-logs/
+            ${{ runner.temp }}/TJRA-Compact-Install-Logs/
           if-no-files-found: warn
           retention-days: 7
 
@@ -195,6 +212,7 @@ jobs:
             out/compact-dist/TJ.RemoteAccess-0.5.4-preview-Compact-Setup-win-x64.exe.sha256
             out/compact-dist/compact-size-report.json
             out/compact-dist/runtime-provenance.json
+            out/compact-dist/source.zip
           if-no-files-found: error
           retention-days: 14
 

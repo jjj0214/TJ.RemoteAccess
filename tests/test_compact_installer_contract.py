@@ -133,6 +133,16 @@ class CompactNativeInstallerContract(unittest.TestCase):
             self.assertIn(token.lower(), self.ci.lower())
         self.assertNotIn("dotnet build .\\TJ.RemoteAccess.sln -c Release --nologo --no-restore", self.ci)
 
+    def test_final_gate_uploads_source_hash_and_full_install_logs(self):
+        self.assertIn("feature/chatgpt-compact-native-verify", self.ci)
+        self.assertIn("out/compact-dist/source.zip", self.ci)
+        self.assertIn("TJRA-Compact-Install-Logs/", self.ci)
+        self.assertIn("Audit real compact installer component and license paths", self.ci)
+        self.assertIn("Uninstaller left shared runtime behind", self.ci)
+        self.assertIn("if-no-files-found: error", self.ci)
+        self.assertIn("compact-size-report.json", self.ci)
+        self.assertIn("runtime-provenance.json", self.ci)
+
     def test_ps_parser_regression_includes_new_builder(self):
         script = (ROOT / "tests/preview_powershell_parse_tests.cs").read_text(
             encoding="utf-8-sig")
