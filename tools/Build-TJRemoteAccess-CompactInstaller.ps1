@@ -67,15 +67,31 @@ foreach ($app in @('Server','Viewer','Setup')) {
     if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
     New-Item -ItemType Directory -Path $dest -Force | Out-Null
     $project = Join-Path $root "src\TJRemoteAccess.Core\TJ.RemoteAccess.$app.csproj"
-    Run-Checked "$app .NET 10 publish" 'dotnet' @(
-        'publish',$project,'-c','Release','-r','win-x64',
-        '--self-contained','false','-p:PublishSingleFile=false',
-        '-p:PublishTrimmed=false','-p:PublishReadyToRun=false',
-        '-p:UseAppHost=true','-p:TargetFramework=net10.0-windows',
+    # All three legacy .csproj files live in ONE source directory. Their
+    # default obj/project.assets.json is shared, and the baseline net9
+    # solution build occurs before this net10 publish. Never reuse that
+    # NET9 assets cache for the NET10/win-x64 runtime-specific target.
+    # Use a DIFFERENT MSBuild intermediate/restore location for each app.
+    $obj = (Join-Path $root ("out\compact-obj\" + $app)).TrimEnd('\','/') + '/'
+    [IO.Directory]::CreateDirectory($obj) | Out-Null
+    $msbuild = @(
+        '-p:TargetFramework=net10.0-windows',
+        '-p:BaseIntermediateOutputPath=' + $obj,
+        '-p:MSBuildProjectExtensionsPath=' + $obj,
         '-p:AppHostDotNetSearch=AppRelative',
         '-p:AppHostRelativeDotNet=../Runtime',
         "-p:Version=$Version",'-p:AssemblyVersion=0.5.4.0',
-        '-p:FileVersion=0.5.4.0','-o',$dest,'--nologo'
+        '-p:FileVersion=0.5.4.0'
+    )
+    Run-Checked "$app isolated .NET 10/win-x64 NuGet restore" 'dotnet' (
+        @('restore',$project,'-r','win-x64','--force','--nologo') + $msbuild
+    )
+    Run-Checked "$app .NET 10 publish from isolated restore" 'dotnet' (
+        @('publish',$project,'-c','Release','-r','win-x64',
+          '--no-restore','--self-contained','false',
+          '-p:PublishSingleFile=false','-p:PublishTrimmed=false',
+          '-p:PublishReadyToRun=false','-p:UseAppHost=true',
+          '-o',$dest,'--nologo') + $msbuild
     )
     foreach ($ext in @('.exe','.dll','.runtimeconfig.json','.deps.json')) {
         Require-File (Join-Path $dest ("TJ.RemoteAccess.$app" + $ext))

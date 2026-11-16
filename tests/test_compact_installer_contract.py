@@ -58,6 +58,18 @@ class CompactNativeInstallerContract(unittest.TestCase):
                           "New-NetFirewallRule", "Stop-Service", "Remove-Item $env:LOCALAPPDATA"):
             self.assertNotIn(forbidden, self.script)
 
+    def test_net10_restore_has_isolated_assets_per_app(self):
+        # The original three projects share one source folder and obj path.
+        # .NET 9 test build must NEVER race/overwrite .NET 10 publish assets.
+        for token in (
+            "out\\compact-obj", "$app", "MSBuildProjectExtensionsPath",
+            "BaseIntermediateOutputPath", "dotnet' (",
+            "'restore',$project", "'publish',$project",
+            "--no-restore", "--force", "'win-x64'",
+        ):
+            self.assertIn(token, self.script)
+        self.assertIn("$msbuild", self.script)
+
     def test_microsoft_runtime_is_fully_pinned_and_verified(self):
         for token in (
             "RuntimeVersion = '10.0.15'",

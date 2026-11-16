@@ -82,10 +82,11 @@ jobs:
           Get-Content -LiteralPath $stderr -Tail 50 | ForEach-Object { Write-Host $_ }
           if ($p.ExitCode -ne 0) {
             $messages = @(Get-Content -LiteralPath $stderr) + @(Get-Content -LiteralPath $stdout)
-            $match = @($messages | Where-Object { $_ -match '(throw|failed|error|Missing|Exception|not found|invalid|unsupported)' })
-            $reason = if ($match.Count -gt 0) { [string]$match[-1] } else { 'Unknown compact installer packaging failure' }
+            $sdk = @($messages | Select-String -Pattern 'error (NETSDK[0-9]+:.*)' | ForEach-Object { $_.Matches[0].Groups[1].Value })
+            $misc = @($messages | Select-String -Pattern '(Exception:.*|throw.*|failed.*|not found.*|invalid.*|unsupported.*)' | ForEach-Object { $_.Matches[0].Value })
+            $reason = if ($sdk.Count -gt 0) { [string]$sdk[0] } elseif ($misc.Count -gt 0) { [string]$misc[0] } else { 'Unknown compact installer packaging failure' }
             $reason = ($reason -replace '[\r\n\t]+',' ' -replace '[^A-Za-z0-9 ,.:;()/_\[\]=-]',' ').Trim()
-            if ($reason.Length -gt 130) { $reason = $reason.Substring(0,130) }
+            if ($reason.Length -gt 180) { $reason = $reason.Substring(0,180) }
             [IO.File]::AppendAllText($env:GITHUB_OUTPUT, "message=$reason" + [Environment]::NewLine)
             Write-Host "COMPACT BUILD FAILED: $reason"
             exit $p.ExitCode
