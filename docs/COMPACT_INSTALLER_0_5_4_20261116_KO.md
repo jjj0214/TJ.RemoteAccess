@@ -45,6 +45,8 @@ IL Trimming/ReadyToRun은 WinForms/Reflection/인증 호환성 검증 전까지 
 - DOTNET_ROOT가 잘못된 경로라도 Setup.exe service-host status가 공용 Runtime으로 실행되는지 시험
 - Native Inno Setup EXE 무인 Viewer-only 설치, Both 업데이트, 설치 파일/런타임 확인, 제거 및 개인 설정 보존 시험
 - Size report JSON과 Installer SHA-256을 산출물로 함께 제공
+- 최종 CI 아티팩트에 GPL 해당 소스 `source.zip` 별도 동봉, 무인 설치·제거 실패 시 Inno 설치 로그도 진단 아티팩트로 보존
+- 단일 설치 EXE의 실제 크기는 `compact-size-report.json`의 `bytes` 값으로 확인하며, 런타임 실제 설치 크기는 `runtimeBytes`로 구분
 - 실제 WinForms 원격 GUI/3명 동시 접속/Win10~11 장비 테스트는 최종 사용자 수용으로 남김
 
 | 최종 PC 시험 | 기대 |
