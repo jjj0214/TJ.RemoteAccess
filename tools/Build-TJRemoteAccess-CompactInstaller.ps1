@@ -16,6 +16,11 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+# PowerShell 7 argument handling: prevent Windows PowerShell 5.1 native
+# command line collapsing multi-value MSBuild properties on hosted runners.
+if ($PSVersionTable.PSVersion.Major -ge 7) {
+    $PSNativeCommandArgumentPassing = 'Standard'
+}
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 . (Join-Path $PSScriptRoot 'Get-TJRemoteAccessFileSha256.ps1')
 Add-Type -AssemblyName System.IO.Compression
@@ -27,7 +32,11 @@ function Require-File([string]$path) {
     }
 }
 function Run-Checked([string]$label,[string]$executable,[string[]]$arguments) {
+    if ($null -eq $arguments -or $arguments.Count -eq 0) {
+        throw "Missing process arguments for $label"
+    }
     Write-Host "[run] $label"
+    Write-Host ("[argv] " + $executable + " [" + ($arguments -join "] [") + "]")
     & $executable @arguments
     if ($LASTEXITCODE -ne 0) { throw "$label failed: exit=$LASTEXITCODE" }
 }

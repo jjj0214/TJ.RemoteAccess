@@ -69,7 +69,7 @@ jobs:
       - name: Compile single native EXE + one private Microsoft Desktop Runtime
         id: package_compile
         continue-on-error: true
-        shell: powershell
+        shell: pwsh
         run: |
           $logDir = Join-Path $PWD 'out\compact-ci-logs'
           [IO.Directory]::CreateDirectory($logDir) | Out-Null
@@ -78,7 +78,7 @@ jobs:
           $args = @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass',
             '-File','.\tools\Build-TJRemoteAccess-CompactInstaller.ps1',
             '-Version','0.5.4-preview','-RuntimeVersion','10.0.15')
-          $p = Start-Process -FilePath 'powershell.exe' -ArgumentList $args -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          $p = Start-Process -FilePath 'pwsh.exe' -ArgumentList $args -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
           Get-Content -LiteralPath $stdout -Tail 50 | ForEach-Object { Write-Host $_ }
           Get-Content -LiteralPath $stderr -Tail 50 | ForEach-Object { Write-Host $_ }
           if ($p.ExitCode -ne 0) {
@@ -102,7 +102,7 @@ jobs:
 
       - name: Enforce successful compact installer compilation
         if: ${{ steps.package_compile.outcome == 'failure' }}
-        shell: powershell
+        shell: pwsh
         run: |
           throw 'Compact installer compilation failed; see compact-ci-logs for exact error.'
 

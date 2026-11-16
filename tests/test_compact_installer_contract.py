@@ -133,6 +133,16 @@ class CompactNativeInstallerContract(unittest.TestCase):
             self.assertIn(token.lower(), self.ci.lower())
         self.assertNotIn("dotnet build .\\TJ.RemoteAccess.sln -c Release --nologo --no-restore", self.ci)
 
+    def test_dotnet_10_packaging_uses_consistent_native_argv_on_ci(self):
+        # A preceding Windows-hosted run failed with MSB1008, indicating that
+        # MSBuild received multiple project arguments. Enforce PS7 native
+        # argument passing and keep the exact argv visible for diagnosis.
+        self.assertIn("PSNativeCommandArgumentPassing = 'Standard'", self.script)
+        self.assertIn('("[argv] " + $executable', self.script)
+        self.assertIn("Start-Process -FilePath 'pwsh.exe'", self.ci)
+        self.assertIn("shell: pwsh", self.ci)
+        self.assertNotIn("Start-Process -FilePath 'powershell.exe'", self.ci)
+
     def test_final_gate_uploads_source_hash_and_full_install_logs(self):
         self.assertIn("feature/chatgpt-compact-native-verify", self.ci)
         self.assertIn("out/compact-dist/source.zip", self.ci)
