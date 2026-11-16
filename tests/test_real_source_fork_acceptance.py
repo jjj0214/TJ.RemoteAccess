@@ -12,8 +12,10 @@ No company source code or ZIP is read into the public Git source tree.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -31,6 +33,46 @@ DEFAULT_ZIP_PARAM = re.compile(
 )
 
 
+def missing_workstation_source_skip_reason(zip_path, pristine_source, fork, require_real):
+    """Skip ONLY when every machine-provisioned GPL input is absent.
+
+    If ANY expected directory/archive exists (even partially), a failed
+    SHA-256/source/interlock check must remain a genuine failure. Dedicated
+    Windows source acceptance sets TJRA_REQUIRE_REAL_SOURCE=1 to fail on
+    missing inputs instead of skipping. Portable GitHub runners lack those
+    locally provisioned, non-redistributed source files.
+    """
+    if require_real or zip_path.is_file() or pristine_source.is_dir() or fork.exists():
+        return None
+    return ("Real TightVNC source acceptance requires the pinned local GPL "
+            "archive and verified extracted tree on the dedicated JJJ Dev "
+            "workstation. Set TJRA_REQUIRE_REAL_SOURCE=1 to enforce this gate.")
+
+
+class RealSourcePrerequisitePolicyTests(unittest.TestCase):
+    def test_only_completely_unprovisioned_portable_environment_skips(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            archive = root / "not-provisioned.zip"
+            source = root / "verified-source"
+            fork = root / "derived"
+            self.assertIsNotNone(
+                missing_workstation_source_skip_reason(archive, source, fork, False))
+            self.assertIsNone(
+                missing_workstation_source_skip_reason(archive, source, fork, True))
+            source.mkdir()
+            self.assertIsNone(
+                missing_workstation_source_skip_reason(archive, source, fork, False))
+            source.rmdir()
+            fork.mkdir()
+            self.assertIsNone(
+                missing_workstation_source_skip_reason(archive, source, fork, False))
+            fork.rmdir()
+            archive.write_bytes(b"incomplete")
+            self.assertIsNone(
+                missing_workstation_source_skip_reason(archive, source, fork, False))
+
+
 class RealSourceForkAcceptance(unittest.TestCase):
     def test_prepare_and_audit_isolated_guarded_fork(self):
         # This is intentionally restricted to JJJ Dev: only generate if both
@@ -39,6 +81,11 @@ class RealSourceForkAcceptance(unittest.TestCase):
         match = DEFAULT_ZIP_PARAM.search(script)
         self.assertIsNotNone(match, "No pinned upstream ZIP configured in build workflow")
         zip_path = Path(match.group(1))
+        reason = missing_workstation_source_skip_reason(
+            zip_path, DEFAULT_SOURCE, FORK,
+            os.environ.get("TJRA_REQUIRE_REAL_SOURCE") == "1")
+        if reason:
+            self.skipTest(reason)
         self.assertTrue(zip_path.is_file(), f"Missing public GPL ZIP: {zip_path}")
         self.assertEqual(checksum(zip_path).lower(), EXPECTED_SHA256.lower())
         self.assertTrue(DEFAULT_SOURCE.is_dir(), "Pristine GPL source must already exist")

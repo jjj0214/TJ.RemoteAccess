@@ -22,6 +22,8 @@ permissions:
 jobs:
   windows-preview-installer:
     runs-on: windows-latest
+    outputs:
+      agent_error: ${{ steps.agent_failure.outputs.message }}
     timeout-minutes: 75
     steps:
       - name: Checkout exact GPL source
@@ -50,10 +52,34 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Validate Agent inherited handle subprocess IPC
+        id: agent_subprocess
+        continue-on-error: true
         shell: pwsh
         run: |
           dotnet test .\tests\TJ.RemoteAccess.Lab.Tests.csproj -c Release --no-build --nologo --filter 'FullyQualifiedName~M3AgentExternalProcessTests' --logger 'trx;LogFileName=m3-agent-subprocess.trx' --results-directory .\out\test-results
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Surface Agent IPC exception from Windows TRX
+        if: always()
+        id: agent_failure
+        shell: pwsh
+        run: |
+          if ('${{ steps.agent_subprocess.outcome }}' -ne 'failure') { exit 0 }
+          $result = Join-Path $PWD 'out/test-results/m3-agent-subprocess.trx'
+          $summary = 'Agent subprocess test failed (TRX unavailable)'
+          if (Test-Path -LiteralPath $result -PathType Leaf) {
+            [xml]$report = Get-Content -LiteralPath $result -Raw
+            $failed = $report.SelectSingleNode("//*[local-name()='UnitTestResult' and @outcome='Failed']")
+            if ($null -ne $failed) {
+              $error = $failed.SelectSingleNode("./*[local-name()='Output']/*[local-name()='ErrorInfo']/*[local-name()='Message']")
+              $testName = [string]$failed.testName
+              $summary = $testName + ': ' + [string]$error.InnerText
+            }
+          }
+          $summary = ($summary -replace '[\r\n\t]+', ' ' -replace '[^A-Za-z0-9 .:/_()\[\]-]', ' ').Trim()
+          if ($summary.Length -gt 180) { $summary = $summary.Substring(0, 180) }
+          "message=$summary" >> $env:GITHUB_OUTPUT
+          throw "Agent subprocess integration failed: $summary"
 
       - name: Validate Agent same-process pipe HMAC protocol
         shell: pwsh
@@ -126,3 +152,11 @@ jobs:
           path: out/packages/gui-installer-download/
           if-no-files-found: error
           retention-days: 14
+  agent-ipc-diagnostic:
+    if: ${{ always() && needs['windows-preview-installer'].outputs.agent_error != '' }}
+    needs: windows-preview-installer
+    name: "Agent failure: ${{ needs['windows-preview-installer'].outputs.agent_error }}"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report the bounded failing test reason for read-only job status tools
+        run: echo "See the preceding Windows TRX diagnostics artifact."
