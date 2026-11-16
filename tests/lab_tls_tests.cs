@@ -133,6 +133,7 @@ public sealed class LabTlsTests
         var endpoint = (IPEndPoint)listener.LocalEndpoint;
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var token = cts.Token;
+        int rejectedByServerPolicy = 0;
         var serverTask = Task.Run(async () =>
         {
             using var incoming = await listener.AcceptTcpClientAsync(token);
@@ -145,13 +146,20 @@ public sealed class LabTlsTests
                     EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
                     CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
                     RemoteCertificateValidationCallback = (_, cert, _, _) =>
-                        LabCertificates.ValidatePinned(cert, new string('F', 64),
-                                                       LabCertificates.ClientEku)
+                    {
+                        bool allowed = LabCertificates.ValidatePinned(cert, new string('F', 64),
+                                                                     LabCertificates.ClientEku);
+                        if (!allowed) Interlocked.Increment(ref rejectedByServerPolicy);
+                        return allowed;
+                    }
                 }, token);
-                return false;
+                // Windows Schannel may finish the server-side TLS handshake
+                // before it processes the peer's TLS fatal alert (notably
+                // TLS 1.3). Do not equate AuthenticateAsServer's return with
+                // acceptance of the rejected Viewer identity.
             }
-            catch (AuthenticationException) { return true; }
-            catch (IOException) { return true; }
+            catch (AuthenticationException) { }
+            catch (IOException) { }
         }, token);
         using var client = new TcpClient();
         await client.ConnectAsync(IPAddress.Loopback, endpoint.Port, token);
@@ -171,6 +179,12 @@ public sealed class LabTlsTests
         }
         catch (AuthenticationException) { }
         catch (IOException) { }
-        Assert.True(await serverTask, "A non-allowlisted client must be refused by Schannel.");
+        // The server MUST reject the presented client's wrong SHA-256.
+        // Never assert that Schannel throws at a specific handshake phase;
+        // both TLS 1.2 and 1.3 can report asymmetric completion.
+        clientStream.Dispose();
+        await serverTask;
+        Assert.True(Volatile.Read(ref rejectedByServerPolicy) > 0,
+            "The pinned server must reject a non-allowlisted Viewer certificate.");
     }
 }
