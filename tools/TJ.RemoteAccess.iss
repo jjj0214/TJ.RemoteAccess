@@ -30,7 +30,6 @@ MinVersion=10.0
 ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 WizardStyle=modern
-WizardResizable=yes
 ShowComponentSizes=yes
 Compression=lzma2
 SolidCompression=yes
