@@ -1,0 +1,9 @@
+<Project>
+  <!-- Multiple C# test projects share this folder; never share restore
+       assets or generated assembly attributes. Native MSBuild VC++ projects
+       in tests/ are intentionally unaffected. -->
+  <PropertyGroup Condition="'$(MSBuildProjectExtension)' == '.csproj'">
+    <BaseIntermediateOutputPath>obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+    <MSBuildProjectExtensionsPath>$(BaseIntermediateOutputPath)</MSBuildProjectExtensionsPath>
+  </PropertyGroup>
+</Project>

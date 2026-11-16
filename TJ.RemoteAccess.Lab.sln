@@ -10,6 +10,10 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TJ.RemoteAccess.Lab.Setup",
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TJ.RemoteAccess.Lab.Tests", "tests\TJ.RemoteAccess.Lab.Tests.csproj", "{93603732-232F-4E82-8E33-D1C07F28330D}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TJ.RemoteAccess.M3.ControlService", "src\TJRemoteAccess.Core\TJ.RemoteAccess.M3.ControlService.csproj", "{B5A96A4F-8D3B-4021-AF4A-5F11B830705B}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TJ.RemoteAccess.M3.Agent", "src\TJRemoteAccess.Core\TJ.RemoteAccess.M3.Agent.csproj", "{8214305A-C6E9-49B5-92BE-2F88C1220C78}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -32,6 +36,14 @@ Global
 		{93603732-232F-4E82-8E33-D1C07F28330D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{93603732-232F-4E82-8E33-D1C07F28330D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{93603732-232F-4E82-8E33-D1C07F28330D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B5A96A4F-8D3B-4021-AF4A-5F11B830705B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B5A96A4F-8D3B-4021-AF4A-5F11B830705B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B5A96A4F-8D3B-4021-AF4A-5F11B830705B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B5A96A4F-8D3B-4021-AF4A-5F11B830705B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8214305A-C6E9-49B5-92BE-2F88C1220C78}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8214305A-C6E9-49B5-92BE-2F88C1220C78}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8214305A-C6E9-49B5-92BE-2F88C1220C78}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8214305A-C6E9-49B5-92BE-2F88C1220C78}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

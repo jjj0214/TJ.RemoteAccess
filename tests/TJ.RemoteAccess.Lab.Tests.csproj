@@ -10,6 +10,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="9.0.0" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
       <PrivateAssets>all</PrivateAssets>
@@ -28,6 +29,19 @@
     <Compile Include="lab_viewer_launch_tests.cs" />
     <Compile Include="m3_ipc_security_tests.cs" />
     <Compile Include="m3_agent_bootstrap_tests.cs" />
+    <Compile Include="m3_session_lifecycle_tests.cs" />
+    <Compile Include="m3_agent_pipe_end_to_end_tests.cs" />
+    <Compile Include="m3_service_status_tests.cs" />
+    <Compile Include="m3_agent_external_process_tests.cs" />
+    <Compile Include="m3_service_session_policy_tests.cs" />
+    <Compile Include="m3_supervised_host_tests.cs" />
+    <Compile Include="preview_powershell_parse_tests.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\M3ServiceHostPolicy.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\M3DesktopEnrollment.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\M3SupervisedDesktopHost.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\M3InteractiveDesktopGuard.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\M3ServiceSessionPolicy.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\M3ServiceStatus.cs" />
     <Compile Include="lab_server_launch_tests.cs" />
     <Compile Include="lab_audit_tests.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\LabPasswordAccess.cs" />
@@ -41,7 +55,11 @@
     <Compile Include="..\src\TJRemoteAccess.Core\M3IpcProtocol.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\M3WindowsPipe.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\M3SessionAgent.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\M3SessionLifecycle.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\LabServerLaunch.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\LabAuditWriter.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\src\TJRemoteAccess.Core\TJ.RemoteAccess.M3.Agent.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>

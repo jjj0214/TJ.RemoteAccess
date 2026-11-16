@@ -9,21 +9,29 @@ namespace TJ.RemoteAccess.Lab;
 internal sealed class LabServerSettings
 {
     public string ListenAddress { get; set; } = "127.0.0.1";
-    public int Port { get; set; } = 15444;
+    public int Port { get; set; } = LabCertificates.DefaultPort;
     public string ServerCertificateThumbprint { get; set; } = "";
     public string AllowedClientSha256 { get; set; } = "";
 }
 internal sealed class LabViewerSettings
 {
     public string Host { get; set; } = "127.0.0.1";
-    public int Port { get; set; } = 15444;
+    public int Port { get; set; } = LabCertificates.DefaultPort;
     public string ClientCertificateThumbprint { get; set; } = "";
     public string ServerSha256 { get; set; } = "";
 }
 
 internal static class LabCertificates
 {
+#if TJRA_STANDALONE_PREVIEW
+    // Product preview uses its OWN user-owned configuration and certificates.
+    // Never migrate/overwrite Lab or TightVNC profiles implicitly.
+    internal const string DirectoryName = "TJ.RemoteAccess";
+    internal const int DefaultPort = 15544;
+#else
     internal const string DirectoryName = "TJ.RemoteAccess.Lab";
+    internal const int DefaultPort = 15444;
+#endif
     internal const string ServerEku = "1.3.6.1.5.5.7.3.1";
     internal const string ClientEku = "1.3.6.1.5.5.7.3.2";
     internal static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
@@ -114,8 +122,13 @@ internal static class LabCertificates
             san.AddDnsName("localhost");
             request.CertificateExtensions.Add(san.Build());
         }
+#if TJRA_STANDALONE_PREVIEW
+        const int validityDays = 365; // pinned certificate still needs explicit re-pairing
+#else
+        const int validityDays = 30;
+#endif
         using var ephemeral = request.CreateSelfSigned(
-            DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(30));
+            DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(validityDays));
         string randomPass = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         var pfx = ephemeral.Export(X509ContentType.Pfx, randomPass);
         // Re-import into CurrentUser\My with a persisted user-owned private key.

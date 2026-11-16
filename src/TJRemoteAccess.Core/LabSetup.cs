@@ -11,6 +11,31 @@ internal static class LabSetup
     {
         try
         {
+#if TJRA_STANDALONE_PREVIEW
+            if (args.Length >= 2 && args[0] == "service-host")
+            {
+                switch (args[1])
+                {
+                    case "enable" when args.Length == 3 && args[2] == "--confirm-local-owner":
+                        TJ.RemoteAccess.M3.M3DesktopEnrollmentStore.EnableForCurrentUser(true);
+                        Console.WriteLine("Owner opted in to visible, signed-in session supervision.");
+                        Console.WriteLine("Administrator-owned service host policy is ALSO required.");
+                        return 0;
+                    case "disable" when args.Length == 2:
+                        TJ.RemoteAccess.M3.M3DesktopEnrollmentStore.DisableForCurrentUser();
+                        Console.WriteLine("Owner supervision revoked. Existing Agent checks every heartbeat.");
+                        return 0;
+                    case "status" when args.Length == 2:
+                        Console.WriteLine("Owner enrollment: " +
+                            (TJ.RemoteAccess.M3.M3DesktopEnrollmentStore.IsEnabledForCurrentUser()
+                                ? "ENABLED (service administrator policy still required)" : "DISABLED"));
+                        return 0;
+                    default:
+                        throw new ArgumentException(
+                            "Use service-host enable --confirm-local-owner | disable | status.");
+                }
+            }
+#endif
             if (args.Length == 1 && args[0].Equals("init", StringComparison.OrdinalIgnoreCase))
                 return Init();
             if (args.Length is >= 2 and <= 4 &&
@@ -37,6 +62,10 @@ internal static class LabSetup
                 return LabSetupClientCommands.SetClientControl(args[1], args[2] == "allow" ? true :
                     args[2] == "view-only" ? false : throw new ArgumentException("Expected allow or view-only."));
             Console.WriteLine("TJ.RemoteAccess Lab Setup (current-user only)\n" +
+#if TJRA_STANDALONE_PREVIEW
+                "  TJ.RemoteAccess.Setup.exe service-host enable --confirm-local-owner\n" +
+                "  TJ.RemoteAccess.Setup.exe service-host disable | status\n" +
+#endif
                 "  TJ.RemoteAccess.Lab.Setup.exe init\n" +
                 "  TJ.RemoteAccess.Lab.Setup.exe import-client <client-transfer.pfx> [name] [host]\n" +
                 "  TJ.RemoteAccess.Lab.Setup.exe list-profiles\n" +
@@ -67,13 +96,13 @@ internal static class LabSetup
         using var client = LabCertificates.GenerateCertificate(server: false);
         var serverSettings = new LabServerSettings {
             ListenAddress = "127.0.0.1",
-            Port = 15444,
+            Port = LabCertificates.DefaultPort,
             ServerCertificateThumbprint = server.Thumbprint,
             AllowedClientSha256 = LabCertificates.Hash(client)
         };
         var viewerSettings = new LabViewerSettings {
             Host = "127.0.0.1",
-            Port = 15444,
+            Port = LabCertificates.DefaultPort,
             ClientCertificateThumbprint = client.Thumbprint,
             ServerSha256 = LabCertificates.Hash(server)
         };

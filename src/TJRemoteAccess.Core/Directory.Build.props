@@ -1,0 +1,9 @@
+<Project>
+  <!-- Multiple SDK-style projects share this source directory. Separate restore,
+       generated sources and incremental outputs before Microsoft.Common.props
+       evaluates the intermediate output location. -->
+  <PropertyGroup>
+    <BaseIntermediateOutputPath>obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+    <MSBuildProjectExtensionsPath>$(BaseIntermediateOutputPath)</MSBuildProjectExtensionsPath>
+  </PropertyGroup>
+</Project>

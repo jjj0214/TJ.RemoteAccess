@@ -20,6 +20,7 @@ internal static class M3WindowsSessionLauncher
     private const uint HandleFlagInherit = 0x00000001;
     private const uint ExtendedStartupInfoPresent = 0x00080000;
     private const uint CreateNoWindow = 0x08000000;
+    private const uint CreateUnicodeEnvironment = 0x00000400;
     private const int ProcThreadAttributeHandleList = 0x00020002;
     private const int ErrorInsufficientBuffer = 122;
 
@@ -62,6 +63,15 @@ internal static class M3WindowsSessionLauncher
 
     [DllImport("wtsapi32.dll", SetLastError = true)]
     private static extern bool WTSQueryUserToken(uint sessionId, out SafeAccessTokenHandle token);
+
+    [DllImport("userenv.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateEnvironmentBlock(out IntPtr environment,
+        SafeAccessTokenHandle token, [MarshalAs(UnmanagedType.Bool)] bool inherit);
+
+    [DllImport("userenv.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DestroyEnvironmentBlock(IntPtr environment);
 
     [DllImport("kernel32.dll")]
     private static extern uint WTSGetActiveConsoleSessionId();
@@ -106,6 +116,11 @@ internal static class M3WindowsSessionLauncher
     private static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
 
     [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+
+    private const uint WaitObject0 = 0;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseHandle(IntPtr handle);
 
@@ -128,9 +143,19 @@ internal static class M3WindowsSessionLauncher
             var process = Interlocked.Exchange(ref _process, IntPtr.Zero);
             if (process == IntPtr.Zero) return;
             // The service owns this child; stopping service always stops its agent.
-            if (GetExitCodeProcess(process, out uint code) && code == 259)
-                TerminateProcess(process, 1);
-            CloseHandle(process);
+            try
+            {
+                if (GetExitCodeProcess(process, out uint code) && code == 259 &&
+                    !TerminateProcess(process, 1))
+                    throw new Win32Exception(Marshal.GetLastWin32Error(),
+                                             "Agent termination denied.");
+                // Wait for kernel process teardown so the Agent's child Job
+                // handle closes before a different session can start. A
+                // failure faults the lifecycle chain: no successor attaches.
+                if (WaitForSingleObject(process, 7000) != WaitObject0)
+                    throw new IOException("Agent did not exit before session replacement.");
+            }
+            finally { CloseHandle(process); }
         }
     }
 
@@ -145,15 +170,20 @@ internal static class M3WindowsSessionLauncher
         return agent;
     }
 
+    internal static uint ConsoleSessionId => WTSGetActiveConsoleSessionId();
+
     internal static uint ActiveSession()
     {
-        uint id = WTSGetActiveConsoleSessionId();
+        uint id = ConsoleSessionId;
         if (id is 0 or uint.MaxValue)
             throw new AuthenticationException("No interactive console session available.");
         return id;
     }
 
-    internal static async Task RunSessionOnceAsync(CancellationToken stop)
+    internal static async Task RunSessionOnceAsync(CancellationToken stop,
+                                                    Action<uint, uint>? onAuthenticated = null,
+        bool superviseDesktop = false,
+        Action<uint, uint, bool>? onDesktopStatus = null)
     {
         M3ControlService.ValidateServiceIdentity();
         string executable = ResolveAgentPath();
@@ -168,7 +198,7 @@ internal static class M3WindowsSessionLauncher
             byte[] key = RandomNumberGenerator.GetBytes(M3Wire.KeyBytes);
             try
             {
-                using var launched = Launch(executable, userToken, session, instance, key);
+                using var launched = Launch(executable, userToken, session, instance, key, superviseDesktop);
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
                 timeout.CancelAfter(TimeSpan.FromSeconds(15));
                 await server.WaitForConnectionAsync(timeout.Token).ConfigureAwait(false);
@@ -177,6 +207,8 @@ internal static class M3WindowsSessionLauncher
                 await M3AgentProof.AuthenticateParentAsync(server, key,
                     peer.Pid, peer.SessionId, launched.ProcessId,
                     launched.SessionId, timeout.Token).ConfigureAwait(false);
+                stop.ThrowIfCancellationRequested();
+                onAuthenticated?.Invoke(launched.ProcessId, launched.SessionId);
                 // Subsequent messages remain heartbeat-only. A session change
                 // or service stop cancels this loop and kills the agent.
                 using var heartbeatDeadline = CancellationTokenSource.CreateLinkedTokenSource(stop);
@@ -185,9 +217,18 @@ internal static class M3WindowsSessionLauncher
                     heartbeatDeadline.CancelAfter(TimeSpan.FromSeconds(8));
                     var beat = await M3Wire.ReadAsync(server, heartbeatDeadline.Token)
                         .ConfigureAwait(false);
-                    if (beat.Type != M3MessageType.Heartbeat ||
-                        ActiveSession() != session)
-                        throw new AuthenticationException("Agent session lost or unexpected command.");
+                    if (ActiveSession() != session)
+                        throw new AuthenticationException("Agent session lost.");
+                    if (beat.Type == M3MessageType.AgentStatus && superviseDesktop)
+                    {
+                        if (beat.Payload.Length != 1 || beat.Payload.Span[0] > 1)
+                            throw new AuthenticationException("Invalid supervised host status.");
+                        onDesktopStatus?.Invoke(launched.ProcessId, launched.SessionId,
+                                                beat.Payload.Span[0] == 1);
+                        continue;
+                    }
+                    if (beat.Type != M3MessageType.Heartbeat)
+                        throw new AuthenticationException("Agent command not authorized.");
                     heartbeatDeadline.CancelAfter(TimeSpan.FromSeconds(8));
                 }
             }
@@ -196,7 +237,7 @@ internal static class M3WindowsSessionLauncher
     }
 
     private static LaunchedAgent Launch(string executable, SafeAccessTokenHandle userToken,
-        uint session, string instance, byte[] key)
+        uint session, string instance, byte[] key, bool superviseDesktop)
     {
         var attrs = new SecurityAttributes {
             Length = Marshal.SizeOf<SecurityAttributes>(), Inherit = 1
@@ -238,11 +279,24 @@ internal static class M3WindowsSessionLauncher
                                     .ToString("X", CultureInfo.InvariantCulture) +
                                  " --service-pid " +
                                  ((uint)Environment.ProcessId).ToString(CultureInfo.InvariantCulture);
-                    if (!CreateProcessAsUser(userToken, executable, cmd, IntPtr.Zero,
-                        IntPtr.Zero, true, ExtendedStartupInfoPresent | CreateNoWindow,
-                        IntPtr.Zero, Path.GetDirectoryName(executable), ref startup,
-                        out ProcessInformation proc))
-                        throw new Win32Exception(Marshal.GetLastWin32Error(), "Agent process launch failed.");
+                    if (superviseDesktop)
+                        cmd += " --supervise-server";
+                    // Bind to the interactive user's profile and certificate
+                    // store, never to the inherited LocalSystem environment.
+                    if (!CreateEnvironmentBlock(out IntPtr environment, userToken, false))
+                        throw new Win32Exception(Marshal.GetLastWin32Error(),
+                                                 "User environment initialization failed.");
+                    ProcessInformation proc;
+                    try
+                    {
+                        if (!CreateProcessAsUser(userToken, executable, cmd, IntPtr.Zero,
+                            IntPtr.Zero, true,
+                            ExtendedStartupInfoPresent | CreateNoWindow | CreateUnicodeEnvironment,
+                            environment, Path.GetDirectoryName(executable), ref startup, out proc))
+                            throw new Win32Exception(Marshal.GetLastWin32Error(),
+                                                     "Agent process launch failed.");
+                    }
+                    finally { DestroyEnvironmentBlock(environment); }
                     CloseHandle(proc.Thread);
                     var launched = new LaunchedAgent(proc.Process, proc.ProcessId, session);
                     try

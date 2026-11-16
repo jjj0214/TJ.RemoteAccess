@@ -42,7 +42,11 @@ internal static class LabServerProgram
         }
         catch (Exception ex)
         {
+#if TJRA_STANDALONE_PREVIEW
+            MessageBox.Show(ex.Message, "TJ.RemoteAccess Server: startup blocked",
+#else
             MessageBox.Show(ex.Message, "TJ.RemoteAccess Lab Server: startup blocked",
+#endif
                             MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
@@ -87,7 +91,11 @@ internal sealed class LabServerForm : Form
         _clientRoster = new LabServerClientRoster(legacyPin: settings.AllowedClientSha256);
         _clientRoster.Load();
         _desktop = SystemInformation.VirtualScreen;
+#if TJRA_STANDALONE_PREVIEW
+        Text = "TJ.RemoteAccess Server - PREVIEW (interactive desktop only)";
+#else
         Text = "TJ.RemoteAccess Lab Server - TEST ONLY";
+#endif
         MinimumSize = new Size(660, 330);
         Width = 830;
         Height = 440;

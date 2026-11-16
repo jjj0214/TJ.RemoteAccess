@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <Version>0.5.0-preview</Version>
+    <AssemblyVersion>0.5.0.0</AssemblyVersion>
+    <FileVersion>0.5.0.0</FileVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>TJ.RemoteAccess.Setup</AssemblyName>
+    <RootNamespace>TJ.RemoteAccess.Lab</RootNamespace>
+    <DefineConstants>$(DefineConstants);TJRA_STANDALONE_PREVIEW</DefineConstants>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="LabCertificates.cs" />
+    <Compile Include="LabViewerProfiles.cs" />
+    <Compile Include="LabSetup.cs" />
+    <Compile Include="M3DesktopEnrollment.cs" />
+    <Compile Include="LabServerClients.cs" />
+    <Compile Include="LabClientPairing.cs" />
+    <Compile Include="LabSetupClientCommands.cs" />
+  </ItemGroup>
+</Project>

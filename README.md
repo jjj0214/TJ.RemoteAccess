@@ -16,6 +16,31 @@ transformation tests compile/pass, and the derived Server/Viewer compile with MS
 See `docs/M2_RFB_INTEGRATION_REVIEW.md` and `tools/audit_m2_fork_security.py`
 for concrete implementation blockers. The static audit never approves deployment.
 
+## Independent TJ.RemoteAccess preview (Windows x64, isolated test PCs only)
+
+- Product-facing solution: `TJ.RemoteAccess.sln` builds **0.5.0-preview** `TJ.RemoteAccess.Server.exe`,
+  `TJ.RemoteAccess.Viewer.exe`, `TJ.RemoteAccess.Setup.exe`, an authenticated
+  `TJRA.ControlService` + per-user Agent, and regression tests. It uses its
+  own user configuration (`%LOCALAPPDATA%\\TJ.RemoteAccess`) and TCP 15544/
+  optional 15545 rather than Lab 15444/15445 or TightVNC 5900.
+- A user-approved visible desktop Server can be supervised by a Windows Service:
+  both administrator-owned `desktop-host-policy.json` AND current-user TLS
+  certificate-bound `service-host enable --confirm-local-owner` enrollment are
+  required. Default is status-only, and a Job object kills the Server if its
+  user Agent dies. Winlogon, lock screen, UAC/secure desktop are **denied**.
+- Windows `tools/Install-TJRemoteAccess-Preview.ps1` is a current-user GUI
+  installer; `Build-TJRemoteAccess-Preview-OfflinePackage.ps1` and
+  `Build-TJRemoteAccess-ServicePreviewPackage.ps1` create hash-manifested,
+  GPL source-corresponding, unsigned ZIPs from a clean HEAD.
+- Development tests (Release compilation and process/IPC checks) **do not**
+  prove LocalSystem SCM installation, real remote GUI from the service,
+  production security, Win10/11 compatibility or unattended/secure desktop
+  behavior. The standalone build is a **PREVIEW, NOT a finished TightVNC
+  replacement**. Do not deploy at customer facilities.
+- Release build of Product and Lab solutions and C++ native test projects, Windows xUnit **164/164**, product-preview isolation xUnit **3/3**, and Python unittest all passed (2026-11-16). Windows PowerShell AST parsing of installer scripts passed; actual installer/SCM execution, GUI acceptance, code signing and MSI are **not tested**.
+- Windows test gates and initial commands:
+  `docs/STANDALONE_PREVIEW_BUILD_TEST_20261116_KO.md`.
+
 ## Interactive Lab remote-control prototype (Windows, test PC only)
 
 - Solution: TJ.RemoteAccess.Lab.sln (Server, Viewer, Setup, xUnit tests).
@@ -51,6 +76,15 @@ for concrete implementation blockers. The static audit never approves deployment
   connections, M3 named-pipe authentication, and unsigned offline packaging
   have isolated tests, but do NOT constitute Windows Service/UAC completion.
   Details and remaining gates: docs/M3_M6_PROGRESS_AND_GATES_20261113_KO.md.
+- The unified `TJ.RemoteAccess.Lab.sln` also builds M3 Service/Agent; SDK-style
+  projects sharing `src/TJRemoteAccess.Core` use per-project intermediate `obj` folders.
+- M3 Windows Service + SessionAgent **status-only** development checkpoint (2026-11-16):
+  single-session revoke/rebind with exact active-console session validation,
+  cross-process inherited-key Win32 IPC acceptance,
+  bounded handshake, diagnostic status, checksum-verified **manual-start** Lab
+  service ZIP/installer/rollback scripts. This is NOT a remote-control service;
+  production MSI, code signing, unattended access and UAC/Winlogon
+  are NOT complete. See docs/M3_STATUS_ONLY_LAB_PACKAGE_AND_GATES_20261116_KO.md.
 
 ## Prerequisites
 

@@ -14,7 +14,7 @@ internal sealed class LabViewerProfile
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
     public string Host { get; set; } = "";
-    public int Port { get; set; } = 15444;
+    public int Port { get; set; } = LabCertificates.DefaultPort;
     public string ClientCertificateThumbprint { get; set; } = "";
     public string AuthMode { get; set; } = "Certificate";
     public string ServerSha256 { get; set; } = "";

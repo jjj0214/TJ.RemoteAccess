@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// M3 SERVICE FOUNDATION. No network listener, remote input, desktop capture
-// or unattended access. The agent launcher is deliberately not enabled until
-// token/handle/consent and engine authorization gates are independently proven.
+// STATUS ONLY: a LocalSystem service supervises a single user-session Agent.
+// Does not expose TLS/RFB, desktop capture, remote input or UAC automation.
 using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Security.Principal;
@@ -14,8 +13,8 @@ internal sealed class M3ControlService : ServiceBase
 {
     internal const string ServiceIdentity = "TJRA.ControlService";
     private readonly object _sync = new();
-    private CancellationTokenSource? _shutdown;
-    private Task? _agentWorker;
+    private M3SessionLifecycle? _lifecycle;
+    private readonly M3ServiceStatus _status = new();
 
     internal M3ControlService()
     {
@@ -30,15 +29,8 @@ internal sealed class M3ControlService : ServiceBase
     {
         using var identity = WindowsIdentity.GetCurrent();
         if (identity.User is null ||
-            !identity.User.IsWellKnown(WellKnownSidType.LocalSystemSid) ||
-            !Environment.UserInteractive)
-        {
-            // LocalSystem only; session-zero requirement is checked separately
-            // in the service startup path rather than relying on account alone.
-            if (identity.User is null ||
-                !identity.User.IsWellKnown(WellKnownSidType.LocalSystemSid))
-                throw new UnauthorizedAccessException("M3 service requires LocalSystem.");
-        }
+            !identity.User.IsWellKnown(WellKnownSidType.LocalSystemSid))
+            throw new UnauthorizedAccessException("M3 service requires LocalSystem.");
         if (Process.GetCurrentProcess().SessionId != 0)
             throw new UnauthorizedAccessException("M3 service must execute in Session 0.");
     }
@@ -48,28 +40,44 @@ internal sealed class M3ControlService : ServiceBase
         if (args.Length != 0)
             throw new ArgumentException("ControlService does not accept startup arguments.");
         ValidateServiceIdentity();
+        _status.TryWrite("Starting");
         lock (_sync)
         {
-            _shutdown = new CancellationTokenSource();
-            var token = _shutdown.Token;
-            _agentWorker = Task.Run(async () => {
-                try { await M3WindowsSessionLauncher.RunSessionOnceAsync(token); }
-                catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-                catch (Exception ex) {
-                    Trace.TraceWarning("M3 status-only agent stopped: " + ex.GetType().Name);
-                }
-            });
+            if (_lifecycle is not null)
+                throw new InvalidOperationException("M3 service already started.");
+            // Default fail-closed: a protected operator policy must opt into
+            // desktop hosting. A user enrollment in isolation is insufficient.
+            bool allowDesktopHost = M3ServiceHostPolicyStore.IsEnabled();
+            _lifecycle = new M3SessionLifecycle(
+                token => M3WindowsSessionLauncher.RunSessionOnceAsync(
+                    token,
+                    (pid, session) => _status.TryWrite("AgentAuthenticated", pid, session),
+                    superviseDesktop: allowDesktopHost,
+                    onDesktopStatus: (pid, session, started) =>
+                        _status.TryWrite(started ? "DesktopHostStarted" :
+                            "DesktopHostNotEnrolled", started ? pid : null,
+                            started ? session : null)),
+                ex => {
+                    _status.TryWrite("AgentFailed", diagnostic: ex.GetType().Name);
+                    Trace.TraceWarning("M3 Agent stopped: " + ex.GetType().Name);
+                });
+            _lifecycle.StartOrRebind();
         }
-        // This safety milestone intentionally has no agent-launch or network
-        // listener: a status-only agent cannot be promoted to remote input.
     }
 
     protected override void OnSessionChange(SessionChangeDescription change)
     {
         lock (_sync)
         {
-            // A session change always invalidates any future agent attachment.
-            _shutdown?.Cancel();
+            _status.TryWrite("SessionRevoked");
+            // Revocation always wins when a desktop becomes inaccessible.
+            // A subsequent verified logon/unlock creates a NEW authentication
+            // key, named pipe, process and session. Never resume old input.
+            if (M3ServiceSessionPolicy.MayStartConsoleAgent(change.Reason,
+                change.SessionId, M3WindowsSessionLauncher.ConsoleSessionId))
+                _lifecycle?.StartOrRebind();
+            else
+                _lifecycle?.Revoke();
         }
         base.OnSessionChange(change);
     }
@@ -84,12 +92,14 @@ internal sealed class M3ControlService : ServiceBase
 
     private void Shutdown()
     {
+        M3SessionLifecycle? old;
         lock (_sync)
         {
-            _shutdown?.Cancel();
-            _shutdown?.Dispose();
-            _shutdown = null;
+            old = _lifecycle;
+            _lifecycle = null;
         }
+        old?.Dispose();
+        _status.TryWrite("Stopped");
     }
 
     private static void Main()

@@ -1,0 +1,57 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TJ.RemoteAccess.Server", "src\TJRemoteAccess.Core\TJ.RemoteAccess.Server.csproj", "{71805237-70ED-44A9-A84C-EA31F302B987}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TJ.RemoteAccess.Viewer", "src\TJRemoteAccess.Core\TJ.RemoteAccess.Viewer.csproj", "{5E349C33-9C28-4EF3-9ACB-612A16344683}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TJ.RemoteAccess.Setup", "src\TJRemoteAccess.Core\TJ.RemoteAccess.Setup.csproj", "{38DC6C8F-73DD-4693-91D4-848B850AD1C5}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TJ.RemoteAccess.RegressionTests", "tests\TJ.RemoteAccess.Lab.Tests.csproj", "{93603732-232F-4E82-8E33-D1C07F28330D}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TJ.RemoteAccess.M3.ControlService", "src\TJRemoteAccess.Core\TJ.RemoteAccess.M3.ControlService.csproj", "{B5A96A4F-8D3B-4021-AF4A-5F11B830705B}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TJ.RemoteAccess.M3.Agent", "src\TJRemoteAccess.Core\TJ.RemoteAccess.M3.Agent.csproj", "{8214305A-C6E9-49B5-92BE-2F88C1220C78}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TJ.RemoteAccess.Preview.Tests", "tests\TJ.RemoteAccess.Preview.Tests.csproj", "{47864B73-9B40-4824-A13C-26E530C3D65A}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{47864B73-9B40-4824-A13C-26E530C3D65A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{47864B73-9B40-4824-A13C-26E530C3D65A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{47864B73-9B40-4824-A13C-26E530C3D65A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{47864B73-9B40-4824-A13C-26E530C3D65A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{71805237-70ED-44A9-A84C-EA31F302B987}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{71805237-70ED-44A9-A84C-EA31F302B987}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{71805237-70ED-44A9-A84C-EA31F302B987}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{71805237-70ED-44A9-A84C-EA31F302B987}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5E349C33-9C28-4EF3-9ACB-612A16344683}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5E349C33-9C28-4EF3-9ACB-612A16344683}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5E349C33-9C28-4EF3-9ACB-612A16344683}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5E349C33-9C28-4EF3-9ACB-612A16344683}.Release|Any CPU.Build.0 = Release|Any CPU
+		{38DC6C8F-73DD-4693-91D4-848B850AD1C5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{38DC6C8F-73DD-4693-91D4-848B850AD1C5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{38DC6C8F-73DD-4693-91D4-848B850AD1C5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{38DC6C8F-73DD-4693-91D4-848B850AD1C5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{93603732-232F-4E82-8E33-D1C07F28330D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{93603732-232F-4E82-8E33-D1C07F28330D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{93603732-232F-4E82-8E33-D1C07F28330D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{93603732-232F-4E82-8E33-D1C07F28330D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B5A96A4F-8D3B-4021-AF4A-5F11B830705B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B5A96A4F-8D3B-4021-AF4A-5F11B830705B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B5A96A4F-8D3B-4021-AF4A-5F11B830705B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B5A96A4F-8D3B-4021-AF4A-5F11B830705B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8214305A-C6E9-49B5-92BE-2F88C1220C78}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8214305A-C6E9-49B5-92BE-2F88C1220C78}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8214305A-C6E9-49B5-92BE-2F88C1220C78}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8214305A-C6E9-49B5-92BE-2F88C1220C78}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

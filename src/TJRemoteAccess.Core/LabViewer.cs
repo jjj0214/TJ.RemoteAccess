@@ -26,7 +26,11 @@ internal static class LabViewerProgram
         }
         catch (Exception ex)
         {
+#if TJRA_STANDALONE_PREVIEW
+            MessageBox.Show(ex.Message, "TJ.RemoteAccess Viewer Preview",
+#else
             MessageBox.Show(ex.Message, "TJ.RemoteAccess Lab Viewer",
+#endif
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
@@ -78,12 +82,16 @@ internal sealed class LabViewerForm : Form
     internal LabViewerForm(LabViewerProfileStore profileStore, LabViewerLaunchOptions? launch = null)
     {
         _profileStore = profileStore;
+#if TJRA_STANDALONE_PREVIEW
+        Text = "TJ.RemoteAccess Viewer - PREVIEW";
+#else
         Text = "TJ.RemoteAccess Lab Viewer - TEST ONLY";
+#endif
         MinimumSize = new Size(720, 440);
         Width = 1210;
         Height = 790;
         KeyPreview = true;
-        _port.Value = 15444;
+        _port.Value = LabCertificates.DefaultPort;
         var toolbar = new FlowLayoutPanel {
             Dock = DockStyle.Top, Height = 98, Padding = new Padding(5),
             AutoScroll = true, WrapContents = true
@@ -181,7 +189,7 @@ private LabViewerProfile? SelectedProfile =>
             _profilePicker.Items.Clear();
             _loadingProfiles = false;
             _host.Clear();
-            _port.Value = 15444;
+            _port.Value = LabCertificates.DefaultPort;
             _status.Text = "Unable to load server profiles: " + ex.Message;
             _connect.Enabled = false;
         }
@@ -194,7 +202,7 @@ private LabViewerProfile? SelectedProfile =>
         if (SelectedProfile is not { } profile)
         {
             _host.Clear();
-            _port.Value = 15444;
+            _port.Value = LabCertificates.DefaultPort;
             _status.Text = "No server paired. Click Add server.";
             UpdateProfileControls();
             return;
