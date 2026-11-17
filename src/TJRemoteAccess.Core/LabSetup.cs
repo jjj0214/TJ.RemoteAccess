@@ -12,6 +12,8 @@ internal static class LabSetup
         try
         {
 #if TJRA_STANDALONE_PREVIEW
+            if (args.Length == 1 && args[0].Equals("init-server", StringComparison.OrdinalIgnoreCase))
+                return InitServerOnly();
             if (args.Length >= 2 && args[0] == "service-host")
             {
                 switch (args[1])
@@ -85,6 +87,29 @@ internal static class LabSetup
         }
     }
 
+#if TJRA_STANDALONE_PREVIEW
+    // Installer first-run provision: server identity only, no Viewer private key
+    // export, no password listener, no service registration or firewall rule.
+    // Existing TLS identities are never regenerated or overwritten.
+    private static int InitServerOnly()
+    {
+        if (File.Exists(LabCertificates.ServerFile))
+        {
+            Console.WriteLine("Existing Server identity preserved.");
+            return 0;
+        }
+        using var server = LabCertificates.GenerateCertificate(server: true);
+        LabCertificates.WriteSettings(LabCertificates.ServerFile, new LabServerSettings {
+            ListenAddress = "0.0.0.0",
+            Port = LabCertificates.DefaultPort,
+            ServerCertificateThumbprint = server.Thumbprint,
+            AllowedClientSha256 = ""
+        });
+        Console.WriteLine("Created current-user TLS Server identity. Pair Viewer or enable optional password access locally.");
+        return 0;
+    }
+#endif
+
     private static int Init()
     {
         if (File.Exists(LabCertificates.ServerFile))
@@ -95,7 +120,11 @@ internal static class LabSetup
         using var server = LabCertificates.GenerateCertificate(server: true);
         using var client = LabCertificates.GenerateCertificate(server: false);
         var serverSettings = new LabServerSettings {
+#if TJRA_STANDALONE_PREVIEW
+            ListenAddress = "0.0.0.0",
+#else
             ListenAddress = "127.0.0.1",
+#endif
             Port = LabCertificates.DefaultPort,
             ServerCertificateThumbprint = server.Thumbprint,
             AllowedClientSha256 = LabCertificates.Hash(client)
@@ -132,7 +161,11 @@ internal static class LabSetup
         Console.WriteLine("Pairing folder (SENSITIVE): " + pairing);
         Console.WriteLine("Client PFX export password (COPY NOW, NOT SAVED): " + passphrase);
         Console.WriteLine("Original TightVNC remains untouched.");
+#if TJRA_STANDALONE_PREVIEW
+        Console.WriteLine("Server listens on 0.0.0.0 for LAN; TLS identity and authorization remain required.");
+#else
         Console.WriteLine("Server initially binds to 127.0.0.1 ONLY.");
+#endif
         Console.WriteLine("For another PC, securely transfer viewer.json and " +
                           "client-transfer.pfx, then run import-client on the viewer.");
         Console.WriteLine("After importing, erase the exported PFX and its password " +

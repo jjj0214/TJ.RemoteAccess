@@ -71,7 +71,7 @@ Source: "{#RepoRoot}\out\compact-dist\source.zip"; DestDir: "{app}\GPL-Source"; 
 Source: "{#RepoRoot}\out\compact-dist\runtime-provenance.json"; DestDir: "{app}\Licenses"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\TJ.RemoteAccess Server"; Filename: "{app}\Server\TJ.RemoteAccess.Server.exe"; Components: server
+Name: "{group}\TJ.RemoteAccess Server"; Filename: "{app}\Server\TJ.RemoteAccess.Server.exe"; Parameters: "--allow-lan"; Components: server
 Name: "{group}\TJ.RemoteAccess Viewer"; Filename: "{app}\Viewer\TJ.RemoteAccess.Viewer.exe"; Components: viewer
 Name: "{group}\Uninstall TJ.RemoteAccess"; Filename: "{uninstallexe}"
 Name: "{userdesktop}\TJ.RemoteAccess Viewer"; Filename: "{app}\Viewer\TJ.RemoteAccess.Viewer.exe"; Components: viewer; Tasks: desktopicon
@@ -79,10 +79,15 @@ Name: "{userdesktop}\TJ.RemoteAccess Viewer"; Filename: "{app}\Viewer\TJ.RemoteA
 [Tasks]
 Name: "desktopicon"; Description: "Create a Viewer desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
 
+[Run]
+; First install initializes only the missing current-user Server TLS identity.
+; No password is enabled and existing server.json / Viewer profiles are not touched.
+Filename: "{app}\Setup\TJ.RemoteAccess.Setup.exe"; Parameters: "init-server"; Flags: runhidden waituntilterminated; Components: server
+
 [Code]
 function InitializeSetup(): Boolean;
 begin
-  { Never auto-initialize or overwrite server/user TLS pins, passwords, PFX,
-    viewer profiles, Windows Service policy, firewall or TightVNC. }
+  { Missing Server identity is initialized only after install. Never overwrite
+    existing TLS pins, passwords, PFX, profiles, Windows Service or TightVNC. }
   Result := True;
 end;

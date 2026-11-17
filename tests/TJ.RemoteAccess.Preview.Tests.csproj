@@ -30,6 +30,7 @@
     <Compile Include="..\\src\\TJRemoteAccess.Core\\LabQuickPasswordTrust.cs" />
     <Compile Include="..\\src\\TJRemoteAccess.Core\\LabPasswordAccess.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\LabServerTray.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\LabServerLaunch.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\LabCertificates.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\M3DesktopEnrollment.cs" />
   </ItemGroup>

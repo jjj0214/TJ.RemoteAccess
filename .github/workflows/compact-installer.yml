@@ -8,6 +8,7 @@ on:
       - main
       - feature/chatgpt-m2-engine-foundation
       - feature/chatgpt-compact-native-verify
+      - feature/chatgpt-product-ux-m3
     paths:
       - 'src/**'
       - 'tests/**'
@@ -155,6 +156,20 @@ jobs:
             "/DIR=$installed",'/COMPONENTS=server,viewer,setup,runtime',"/LOG=$(Join-Path $logs 'update.log')")
           if (-not (Test-Path (Join-Path $installed 'Server\TJ.RemoteAccess.Server.exe'))) {
             throw 'Upgrade did not install Server'
+          }
+          $serverConfig = Join-Path $settings 'server.json'
+          if (-not (Test-Path -LiteralPath $serverConfig -PathType Leaf)) {
+            throw 'Installer failed to initialize first-run Server identity'
+          }
+          $beforeConfig = [IO.File]::ReadAllText($serverConfig)
+          $serverSettings = $beforeConfig | ConvertFrom-Json
+          if ($serverSettings.ListenAddress -ne '0.0.0.0') { throw 'First-run Server not LAN ready' }
+          if (-not $serverSettings.ServerCertificateThumbprint) { throw 'Server TLS identity missing' }
+          $cert = Get-Item -LiteralPath "Cert:\CurrentUser\My\$($serverSettings.ServerCertificateThumbprint)"
+          if (-not $cert.HasPrivateKey) { throw 'Server TLS certificate lacks private key' }
+          $init = Start-Process -FilePath (Join-Path $installed 'Setup\TJ.RemoteAccess.Setup.exe') -ArgumentList @('init-server') -Wait -PassThru -NoNewWindow
+          if ($init.ExitCode -ne 0 -or [IO.File]::ReadAllText($serverConfig) -ne $beforeConfig) {
+            throw 'Idempotent Server initializer rotated or modified existing credentials'
           }
           if ((Get-ChildItem (Join-Path $installed 'Runtime\shared\Microsoft.WindowsDesktop.App') -Directory).Count -ne 1) {
             throw 'Expected exactly ONE .NET 10 WindowsDesktop runtime'

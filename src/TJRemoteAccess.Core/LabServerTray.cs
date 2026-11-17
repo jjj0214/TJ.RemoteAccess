@@ -77,8 +77,7 @@ internal sealed class LabServerTray : IDisposable
         _menu.Items.Add(_start);
         _menu.Items.Add(_stop);
         _menu.Items.Add(new ToolStripSeparator());
-        _menu.Items.Add("Client access...", null, (_, _) => clients());
-        _menu.Items.Add("Password access...", null, (_, _) => password());
+        _menu.Items.Add("Access settings...", null, (_, _) => clients());
         _serviceSupervision = new ToolStripMenuItem("Allow Windows service supervision",
             null, (_, _) => toggleServiceSupervision());
         _menu.Items.Add(_serviceSupervision);

@@ -24,7 +24,8 @@ internal sealed class LabServerClientAccessForm : Form
     };
 
     internal LabServerClientAccessForm(LabServerClientRoster roster, LabServerSettings settings,
-        System.Security.Cryptography.X509Certificates.X509Certificate2 serverCertificate)
+        System.Security.Cryptography.X509Certificates.X509Certificate2 serverCertificate,
+        Action? openPasswordSettings = null)
     {
         _roster = roster;
         _settings = settings;
@@ -44,6 +45,7 @@ internal sealed class LabServerClientAccessForm : Form
         };
         AddButton(bar, "Refresh", Reload);
         AddButton(bar, "Generate Viewer(s)", GenerateViewers);
+        if (openPasswordSettings is not null) AddButton(bar, "Password / quick access...", openPasswordSettings);
         AddButton(bar, "Disable", () => Change(enabled: false));
         AddButton(bar, "Enable", () => Change(enabled: true));
         AddButton(bar, "Allow control", () => ChangeControl(true));

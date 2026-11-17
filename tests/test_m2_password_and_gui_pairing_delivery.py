@@ -86,7 +86,7 @@ class LabPasswordAndGuiDeliveryTests(unittest.TestCase):
         server = (CORE / "LabServerClientAccessForm.cs").read_text(encoding="utf-8")
         self.assertIn("Generate Viewer(s)", server)
         self.assertIn("LabClientPairingDialog.Create", server)
-        self.assertIn("LabServerClientAccessForm(_clientRoster, _settings, _serverCert)",
+        self.assertIn("LabServerClientAccessForm(_clientRoster, _settings, _serverCert, ShowPasswordAccess)",
                       (CORE / "LabServer.cs").read_text(encoding="utf-8"))
 
     def test_diagnostic_does_not_expose_hashes_secrets_or_configure_remote_access(self):

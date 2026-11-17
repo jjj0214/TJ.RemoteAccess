@@ -178,6 +178,22 @@ class CompactNativeInstallerContract(unittest.TestCase):
         self.assertIn("compact-size-report.json", self.ci)
         self.assertIn("runtime-provenance.json", self.ci)
 
+    def test_installed_server_first_run_is_lan_ready_and_does_not_rotate_credentials(self):
+        setup = (ROOT / 'src/TJRemoteAccess.Core/LabSetup.cs').read_text(encoding='utf-8-sig')
+        launch = (ROOT / 'src/TJRemoteAccess.Core/LabServerLaunch.cs').read_text(encoding='utf-8-sig')
+        server = (ROOT / 'src/TJRemoteAccess.Core/LabServer.cs').read_text(encoding='utf-8-sig')
+        for token in ('init-server', 'InitServerOnly()', 'File.Exists(LabCertificates.ServerFile)',
+                      'ListenAddress = "0.0.0.0"', 'AllowedClientSha256 = ""'):
+            self.assertIn(token, setup)
+        self.assertIn('lan = true;', launch)
+        self.assertIn('LabCertificates.ValidatePinned', server)
+        self.assertIn('[Run]', self.iss)
+        self.assertIn('Parameters: "init-server"; Flags: runhidden waituntilterminated; Components: server', self.iss)
+        self.assertIn('Parameters: "--allow-lan"', self.iss)
+        self.assertIn('Idempotent Server initializer rotated or modified existing credentials', self.ci)
+        self.assertIn('Server TLS certificate lacks private key', self.ci)
+        self.assertNotIn('New-NetFirewallRule', self.iss)
+
     def test_ps_parser_regression_includes_new_builder(self):
         script = (ROOT / "tests/preview_powershell_parse_tests.cs").read_text(
             encoding="utf-8-sig")

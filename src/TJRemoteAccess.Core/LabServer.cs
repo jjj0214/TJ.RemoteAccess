@@ -119,8 +119,7 @@ internal sealed class LabServerForm : Form
     };
     private readonly Button _start = new() { Text = "Start (interactive session)" };
     private readonly Button _stopButton = new() { Text = "Stop", Enabled = false };
-    private readonly Button _clientsButton = new() { Text = "Client access", AutoSize = true };
-    private readonly Button _passwordButton = new() { Text = "Password access", AutoSize = true };
+    private readonly Button _clientsButton = new() { Text = "Access settings", AutoSize = true };
     private readonly object _guard = new();
     private readonly HashSet<Guid> _sessions = new();
     private Guid? _controller;
@@ -164,14 +163,12 @@ internal sealed class LabServerForm : Form
         controls.Controls.Add(_start);
         controls.Controls.Add(_stopButton);
         controls.Controls.Add(_clientsButton);
-        controls.Controls.Add(_passwordButton);
         Controls.Add(_events);
         Controls.Add(_summary);
         Controls.Add(controls);
         _start.Click += (_, _) => StartServer();
         _stopButton.Click += (_, _) => StopServer();
         _clientsButton.Click += (_, _) => ShowClientAccess();
-        _passwordButton.Click += (_, _) => ShowPasswordAccess();
 #if TJRA_STANDALONE_PREVIEW
         _serviceSupervisionEnabled =
             TJ.RemoteAccess.M3.M3DesktopEnrollmentStore.IsEnabledForCurrentUser();
@@ -277,7 +274,7 @@ internal sealed class LabServerForm : Form
 
     private void ShowClientAccess()
     {
-        using var dialog = new LabServerClientAccessForm(_clientRoster, _settings, _serverCert);
+        using var dialog = new LabServerClientAccessForm(_clientRoster, _settings, _serverCert, ShowPasswordAccess);
         dialog.ShowDialog(this);
     }
 

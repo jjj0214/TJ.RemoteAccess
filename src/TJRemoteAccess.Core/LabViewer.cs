@@ -59,6 +59,12 @@ internal sealed class LabViewerForm : Form
     };
     private readonly Button _connect = new() { Text = "Connect", AutoSize = true };
     private readonly Button _disconnect = new() { Text = "Disconnect", AutoSize = true, Enabled = false };
+    private readonly ComboBox _displayMode = new() { Width = 90, DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly Panel _canvasHost = new() { Dock = DockStyle.Fill, AutoScroll = true, BackColor = Color.FromArgb(25, 25, 25) };
+    private readonly Button _pauseDisplay = new() { Text = "Pause display", AutoSize = true };
+    private readonly Button _snapshot = new() { Text = "Save snapshot", AutoSize = true };
+    private readonly Button _sendTaskManager = new() { Text = "Send Ctrl+Shift+Esc", AutoSize = true };
+    private volatile bool _displayPaused;
     private readonly Label _status = new() {
         Dock = DockStyle.Bottom, Height = 28, TextAlign = ContentAlignment.MiddleLeft,
         Padding = new Padding(8)
@@ -125,7 +131,14 @@ internal sealed class LabViewerForm : Form
         toolbar.Controls.Add(_port);
         toolbar.Controls.Add(_connect);
         toolbar.Controls.Add(_disconnect);
-        Controls.Add(_picture);
+        _displayMode.Items.AddRange(new object[] { "Fit", "50%", "75%", "100%", "125%", "150%", "200%" });
+        _displayMode.SelectedIndex = 0;
+        toolbar.Controls.Add(_displayMode);
+        toolbar.Controls.Add(_pauseDisplay);
+        toolbar.Controls.Add(_snapshot);
+        toolbar.Controls.Add(_sendTaskManager);
+        _canvasHost.Controls.Add(_picture);
+        Controls.Add(_canvasHost);
         Controls.Add(_status);
         Controls.Add(toolbar);
         _connect.Click += async (_, _) => await ConnectAsync();
@@ -140,13 +153,17 @@ internal sealed class LabViewerForm : Form
         };
         _refreshProfile.Click += (_, _) => ReloadProfiles();
         _disconnect.Click += (_, _) => Disconnect();
+        _displayMode.SelectedIndexChanged += (_, _) => ApplyDisplayScale();
+        _pauseDisplay.Click += async (_, _) => await ToggleDisplayPauseAsync();
+        _snapshot.Click += (_, _) => SaveSnapshot(); // Save a local copy of the current frame.
+        _sendTaskManager.Click += async (_, _) => await SendTaskManagerShortcutAsync();
         _picture.MouseDown += async (_, e) => {
             _picture.Focus();
             await SendPointerAsync(e.Location, force: true);
         };
         _picture.MouseMove += async (_, e) => await SendPointerAsync(e.Location);
         _picture.MouseUp += async (_, e) => await SendPointerAsync(e.Location, force: true);
-        _picture.MouseWheel += (_, _) => { }; // wheel is unsupported in M2 Lab
+        _picture.MouseWheel += (_, _) => { }; // Wheel requires a server-side input sink.
         KeyDown += async (_, e) => await OnRemoteKey(e, pressed: true);
         KeyUp += async (_, e) => await OnRemoteKey(e, pressed: false);
         Deactivate += async (_, _) => await ReleaseHeldKeysAsync();
@@ -170,7 +187,64 @@ internal sealed class LabViewerForm : Form
 #endif
     }
 
-    private bool CanControl => _connected && _role == LabRole.Controller;
+    private bool CanControl => _connected && !_displayPaused && _role == LabRole.Controller;
+
+    private void ApplyDisplayScale()
+    {
+        if (_displayMode.SelectedIndex <= 0)
+        {
+            _canvasHost.AutoScroll = false;
+            _picture.Dock = DockStyle.Fill;
+            _picture.SizeMode = PictureBoxSizeMode.Zoom;
+            return;
+        }
+        string text = (string)_displayMode.SelectedItem!;
+        double scale = int.Parse(text.TrimEnd('%'), System.Globalization.CultureInfo.InvariantCulture) / 100.0;
+        _picture.Dock = DockStyle.None;
+        _picture.Location = Point.Empty;
+        _picture.SizeMode = PictureBoxSizeMode.StretchImage;
+        _canvasHost.AutoScroll = true;
+        if (_picture.Image is { } image)
+            _picture.Size = new Size(
+                Math.Max(1, (int)Math.Round(image.Width * scale)),
+                Math.Max(1, (int)Math.Round(image.Height * scale)));
+    }
+
+    private async Task ToggleDisplayPauseAsync()
+    {
+        if (!_displayPaused) await ReleaseHeldKeysAsync();
+        _displayPaused = !_displayPaused;
+        _pauseDisplay.Text = _displayPaused ? "Resume display" : "Pause display";
+        _status.Text = _displayPaused ? "Display paused locally; session stays active." : "Display resumed.";
+    }
+
+    private void SaveSnapshot()
+    {
+        if (_picture.Image is null) { _status.Text = "No image to save."; return; }
+        using var dialog = new SaveFileDialog {
+            Filter = "PNG image (*.png)|*.png", DefaultExt = "png",
+            AddExtension = true, FileName = "TJ.RemoteAccess-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".png"
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        try { _picture.Image.Save(dialog.FileName, System.Drawing.Imaging.ImageFormat.Png); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Runtime.InteropServices.ExternalException)
+        { MessageBox.Show(this, ex.Message, "Unable to save image", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+    }
+
+    private async Task SendTaskManagerShortcutAsync()
+    {
+        if (!CanControl) { _status.Text = "Control permission required to send remote keys."; return; }
+        ushort[] keys = { (ushort)Keys.ControlKey, (ushort)Keys.ShiftKey, (ushort)Keys.Escape };
+        try
+        {
+            foreach (ushort key in keys) await SendAsync(LabMessage.Key, LabWire.Key(key, true));
+        }
+        finally
+        {
+            for (int i = keys.Length - 1; i >= 0; i--)
+                await SendAsync(LabMessage.Key, LabWire.Key(keys[i], false));
+        }
+    }
 
 private LabViewerProfile? SelectedProfile =>
         _profilePicker.SelectedItem as LabViewerProfile;
@@ -472,6 +546,9 @@ private LabViewerProfile? SelectedProfile =>
                 var packet = await LabWire.ReadAsync(stream, frameDeadline.Token);
                 if (packet.Type != LabMessage.JpegFrame)
                     throw new InvalidDataException("Unexpected server packet.");
+                // Local freeze keeps reading authenticated frames to avoid
+                // backpressure, while preserving the last rendered bitmap.
+                if (_displayPaused) continue;
                 if (packet.Payload.Length < 4 ||
                     packet.Payload[0] != 0xFF || packet.Payload[1] != 0xD8)
                     throw new InvalidDataException("Invalid JPEG frame.");
@@ -499,13 +576,14 @@ private LabViewerProfile? SelectedProfile =>
                     {
                         try
                         {
-                            if (IsDisposed || !_connected || !ReferenceEquals(_tls, stream))
+                            if (IsDisposed || !_connected || _displayPaused || !ReferenceEquals(_tls, stream))
                             {
                                 bitmap.Dispose();
                                 return;
                             }
                             var oldImage = _picture.Image;
                             _picture.Image = bitmap;
+                            ApplyDisplayScale();
                             oldImage?.Dispose();
                             _frameCount++;
                             if (_frameCount % 30 == 0)
@@ -608,13 +686,22 @@ private LabViewerProfile? SelectedProfile =>
         if (!force && now - _lastMoveAt < 33) return; // capped ~30 input/s
         _lastMoveAt = now;
         var control = _picture.ClientRectangle;
-        float factor = Math.Min((float)control.Width / _desktopWidth,
-                                (float)control.Height / _desktopHeight);
-        if (factor <= 0) return;
-        float displayedWidth = _desktopWidth * factor;
-        float displayedHeight = _desktopHeight * factor;
-        float left = (control.Width - displayedWidth) / 2.0f;
-        float top = (control.Height - displayedHeight) / 2.0f;
+        float displayedWidth, displayedHeight, left, top;
+        if (_picture.SizeMode == PictureBoxSizeMode.StretchImage)
+        {
+            displayedWidth = control.Width; displayedHeight = control.Height;
+            left = 0; top = 0;
+        }
+        else
+        {
+            float factor = Math.Min((float)control.Width / _desktopWidth,
+                                    (float)control.Height / _desktopHeight);
+            displayedWidth = _desktopWidth * factor;
+            displayedHeight = _desktopHeight * factor;
+            left = (control.Width - displayedWidth) / 2.0f;
+            top = (control.Height - displayedHeight) / 2.0f;
+        }
+        if (displayedWidth <= 0 || displayedHeight <= 0) return;
         float x = (location.X - left) / displayedWidth;
         float y = (location.Y - top) / displayedHeight;
         // A button-up event may arrive outside the image during a drag.
@@ -645,6 +732,8 @@ private LabViewerProfile? SelectedProfile =>
         _stop?.Dispose();
         _stop = null;
         _heldKeys.Clear();
+        _displayPaused = false;
+        _pauseDisplay.Text = "Pause display";
         _role = LabRole.ViewOnly;
         _frameCount = 0;
         var oldImage = _picture.Image;

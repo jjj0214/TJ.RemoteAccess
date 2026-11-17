@@ -40,4 +40,18 @@ public sealed class PreviewIsolationTests
         Assert.False(M3DesktopEnrollmentStore.Matches(settings with { AllowSupervisedStart=false },
                                                       "S-1-5-21-101", pin));
     }
+
+    [Fact]
+    public void InstalledPreviewServerAcceptsLanByDefaultWithoutChangingAuthentication()
+    {
+        var manual = LabServerLaunchOptions.Parse(Array.Empty<string>());
+        Assert.True(manual.AllowLan);
+        Assert.False(manual.AutoStart);
+        var auto = LabServerLaunchOptions.Parse(new[] { "--auto-start" });
+        Assert.True(auto.AllowLan);
+        Assert.True(auto.AutoStart);
+        Assert.True(LabServerLaunchOptions.Parse(new[] { "--allow-lan" }).AllowLan);
+        Assert.Throws<ArgumentException>(() =>
+            LabServerLaunchOptions.Parse(new[] { "--allow-lan", "--allow-lan" }));
+    }
 }

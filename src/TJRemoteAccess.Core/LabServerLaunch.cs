@@ -25,6 +25,11 @@ internal sealed record LabServerLaunchOptions(bool AllowLan, bool AutoStart)
                         "Invalid or duplicate Lab Server option. Use --allow-lan and/or --auto-start.");
             }
         }
+#if TJRA_STANDALONE_PREVIEW
+        // Installer/Desktop shortcuts and direct Server.exe launch are LAN-ready.
+        // The certificate pin, password opt-in and authorization still apply.
+        lan = true;
+#endif
         return new(lan, start);
     }
 }
