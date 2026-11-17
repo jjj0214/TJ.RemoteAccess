@@ -8,6 +8,7 @@ on:
       - main
       - feature/chatgpt-m2-engine-foundation
       - feature/chatgpt-compact-native-verify
+      - feature/chatgpt-m3-viewer-access-ux
     paths:
       - 'src/**'
       - 'tests/**'
@@ -80,7 +81,7 @@ jobs:
           $stderr = Join-Path $logDir 'compact-stderr.txt'
           $args = @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass',
             '-File','.\tools\Build-TJRemoteAccess-CompactInstaller.ps1',
-            '-Version','0.5.4-preview','-RuntimeVersion','10.0.15')
+            '-Version','0.5.5-preview','-RuntimeVersion','10.0.15')
           $p = Start-Process -FilePath 'pwsh.exe' -ArgumentList $args -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
           Get-Content -LiteralPath $stdout -Tail 50 | ForEach-Object { Write-Host $_ }
           Get-Content -LiteralPath $stderr -Tail 50 | ForEach-Object { Write-Host $_ }
@@ -117,7 +118,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $exe = (Resolve-Path '.\out\compact-dist\TJ.RemoteAccess-0.5.4-preview-Compact-Setup-win-x64.exe').Path
+          $exe = (Resolve-Path '.\out\compact-dist\TJ.RemoteAccess-0.5.5-preview-Compact-Setup-win-x64.exe').Path
           $installed = Join-Path $env:RUNNER_TEMP 'TJRA-Compact-Install-Check'
           $logs = Join-Path $env:RUNNER_TEMP 'TJRA-Compact-Install-Logs'
           [IO.Directory]::CreateDirectory($logs) | Out-Null
@@ -221,10 +222,10 @@ jobs:
       - name: Upload compact one-EXE for final PC validation
         uses: actions/upload-artifact@v4
         with:
-          name: TJ.RemoteAccess-0.5.4-preview-Compact-Setup-win-x64
+          name: TJ.RemoteAccess-0.5.5-preview-Compact-Setup-win-x64
           path: |
-            out/compact-dist/TJ.RemoteAccess-0.5.4-preview-Compact-Setup-win-x64.exe
-            out/compact-dist/TJ.RemoteAccess-0.5.4-preview-Compact-Setup-win-x64.exe.sha256
+            out/compact-dist/TJ.RemoteAccess-0.5.5-preview-Compact-Setup-win-x64.exe
+            out/compact-dist/TJ.RemoteAccess-0.5.5-preview-Compact-Setup-win-x64.exe.sha256
             out/compact-dist/compact-size-report.json
             out/compact-dist/runtime-provenance.json
             out/compact-dist/source.zip

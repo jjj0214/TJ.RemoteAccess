@@ -16,6 +16,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="LabProtocol.cs" />
+    <Compile Include="LabFileTransferPeer.cs" />
     <Compile Include="LabCertificates.cs" />
     <Compile Include="LabServer.cs" />
     <Compile Include="LabServerTray.cs" />
@@ -25,6 +26,7 @@
     <Compile Include="LabAuditWriter.cs" />
     <Compile Include="LabServerClients.cs" />
     <Compile Include="LabServerClientAccessForm.cs" />
+    <Compile Include="LabServerAccessManager.cs" />
     <Compile Include="LabClientPairing.cs" />
     <Compile Include="LabClientPairingDialog.cs" />
     <Compile Include="LabPasswordAccess.cs" />

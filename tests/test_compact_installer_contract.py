@@ -135,7 +135,7 @@ class CompactNativeInstallerContract(unittest.TestCase):
         for token in (
             "on:", "windows-latest", "10.0.x", "Inno Setup",
             "Build-TJRemoteAccess-CompactInstaller.ps1",
-            "0.5.4-preview", "10.0.15",
+            "0.5.5-preview", "10.0.15",
             "silent install, upgrade, runtime resolution, uninstall smoke",
             "/VERYSILENT", "/COMPONENTS=viewer,setup,runtime",
             "/COMPONENTS=server,viewer,setup,runtime",
@@ -164,6 +164,7 @@ class CompactNativeInstallerContract(unittest.TestCase):
 
     def test_final_gate_uploads_source_hash_and_full_install_logs(self):
         self.assertIn("feature/chatgpt-compact-native-verify", self.ci)
+        self.assertIn("feature/chatgpt-m3-viewer-access-ux", self.ci)
         self.assertIn("      - main", self.ci)
         self.assertIn("compact-metrics:", self.ci)
         self.assertIn("installer_sha16", self.ci)

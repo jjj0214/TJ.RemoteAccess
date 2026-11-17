@@ -88,6 +88,64 @@ public sealed class M3SessionLifecycleTests
         Assert.Equal(1, life.Generation);
     }
 
+    [Fact]
+    public async Task TransientAgentPipeLossRetriesOnlyWithinApprovedSession()
+    {
+        int attempts = 0, failures = 0;
+        using var life = new M3SessionLifecycle(async token =>
+        {
+            if (Interlocked.Increment(ref attempts) == 1)
+                throw new IOException("simulated authenticated agent pipe closure");
+            await Task.Delay(Timeout.Infinite, token);
+        }, _ => Interlocked.Increment(ref failures),
+        mayRetry: () => true, retryDelay: TimeSpan.FromMilliseconds(25));
+        life.StartOrRebind();
+        await SpinUntilAsync(() => Volatile.Read(ref attempts) == 2);
+        Assert.Equal(1, failures);
+        Assert.Equal(1, life.Generation);
+        life.Revoke();
+        await life.Completion.WaitAsync(TimeSpan.FromSeconds(6));
+        Assert.Equal(2, attempts);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AuthOrPolicyFailureNeverRestartsAgent(bool authorizationFailure)
+    {
+        int calls = 0, reports = 0;
+        using var life = new M3SessionLifecycle(_ =>
+        {
+            Interlocked.Increment(ref calls);
+            if (authorizationFailure)
+                throw new UnauthorizedAccessException("invalid agent authentication");
+            throw new IOException("disconnected");
+        }, _ => Interlocked.Increment(ref reports),
+        mayRetry: () => authorizationFailure,
+        retryDelay: TimeSpan.FromMilliseconds(25));
+        life.StartOrRebind();
+        await life.Completion.WaitAsync(TimeSpan.FromSeconds(6));
+        Assert.Equal(1, calls);
+        Assert.Equal(1, reports);
+    }
+
+    [Fact]
+    public async Task RevocationDuringRetryDelayPreventsNewAgent()
+    {
+        int calls = 0, reports = 0;
+        using var life = new M3SessionLifecycle(_ =>
+        {
+            Interlocked.Increment(ref calls);
+            throw new IOException("reconnect");
+        }, _ => Interlocked.Increment(ref reports),
+        mayRetry: () => true, retryDelay: TimeSpan.FromSeconds(2));
+        life.StartOrRebind();
+        await SpinUntilAsync(() => Volatile.Read(ref reports) == 1);
+        life.Revoke();
+        await life.Completion.WaitAsync(TimeSpan.FromSeconds(6));
+        Assert.Equal(1, calls);
+    }
+
     private static async Task SpinUntilAsync(Func<bool> condition)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(6));

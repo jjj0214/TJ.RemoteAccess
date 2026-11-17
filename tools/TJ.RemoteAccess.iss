@@ -1,4 +1,4 @@
-; TJ.RemoteAccess 0.5.4-preview compact per-user installer
+; TJ.RemoteAccess 0.5.5-preview compact per-user installer
 ; Copyright 2026 TJ.RemoteAccess contributors, GPL-2.0-or-later.
 ; Inno Setup creates a NATIVE single EXE. The only .NET runtime in its
 ; payload is the Microsoft WindowsDesktop 10 LTS runtime under {app}\Runtime.
@@ -6,7 +6,7 @@
 #ifndef RepoRoot
   #error RepoRoot must be supplied via ISCC /DRepoRoot=<absolute checkout>
 #endif
-#define AppVersion "0.5.4-preview"
+#define AppVersion "0.5.5-preview"
 
 [Setup]
 AppId={{F13E9AC0-7D9A-43EC-9D04-82EADE1DB315}
@@ -42,7 +42,7 @@ RestartApplications=no
 UninstallDisplayName=TJ.RemoteAccess {#AppVersion}
 UninstallDisplayIcon={app}\Server\TJ.RemoteAccess.Server.exe
 LicenseFile={#RepoRoot}\LICENSE
-VersionInfoVersion=0.5.4.0
+VersionInfoVersion=0.5.5.0
 VersionInfoDescription=TJ.RemoteAccess Compact Preview Setup
 VersionInfoProductName=TJ.RemoteAccess
 
@@ -71,13 +71,19 @@ Source: "{#RepoRoot}\out\compact-dist\source.zip"; DestDir: "{app}\GPL-Source"; 
 Source: "{#RepoRoot}\out\compact-dist\runtime-provenance.json"; DestDir: "{app}\Licenses"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\TJ.RemoteAccess Server"; Filename: "{app}\Server\TJ.RemoteAccess.Server.exe"; Components: server
+Name: "{group}\TJ.RemoteAccess Server"; Filename: "{app}\Server\TJ.RemoteAccess.Server.exe"; Parameters: "--allow-lan"; Components: server
 Name: "{group}\TJ.RemoteAccess Viewer"; Filename: "{app}\Viewer\TJ.RemoteAccess.Viewer.exe"; Components: viewer
 Name: "{group}\Uninstall TJ.RemoteAccess"; Filename: "{uninstallexe}"
 Name: "{userdesktop}\TJ.RemoteAccess Viewer"; Filename: "{app}\Viewer\TJ.RemoteAccess.Viewer.exe"; Components: viewer; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a Viewer desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
+Name: "autostartserver"; Description: "Start Server after I sign in (requires initial Server certificate setup)"; GroupDescription: "Startup:"; Flags: unchecked; Components: server
+
+[Registry]
+; Explicit user opt-in only. Runs in the signed-in USER session; never installs
+; a LocalSystem service, disables UAC or edits firewall/TightVNC settings.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "TJ.RemoteAccess.Server"; ValueData: """{app}\Server\TJ.RemoteAccess.Server.exe"" --allow-lan --auto-start"; Flags: uninsdeletevalue; Tasks: autostartserver; Components: server
 
 [Code]
 function InitializeSetup(): Boolean;

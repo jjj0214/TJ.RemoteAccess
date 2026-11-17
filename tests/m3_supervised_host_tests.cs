@@ -55,6 +55,21 @@ public sealed class M3SupervisedHostTests
             path, Path.Combine(path, "Lab.Server.exe")));
     }
 
+    [Fact]
+    public void AgentCanSuperviseOnlyItsOwnersExactCompactServerPath()
+    {
+        string local = Path.Combine(Path.GetTempPath(), "TJRA-M3-Test-" + Guid.NewGuid().ToString("N"));
+        string good = Path.Combine(local, "Programs", "TJ.RemoteAccess", "Server",
+                                   "TJ.RemoteAccess.Server.exe");
+        Assert.True(M3SupervisedDesktopHost.IsInstalledProductServerPathEligible(local, good));
+        Assert.False(M3SupervisedDesktopHost.IsInstalledProductServerPathEligible(local,
+            Path.Combine(local, "Programs", "TJ.RemoteAccess", "Viewer", "TJ.RemoteAccess.Viewer.exe")));
+        Assert.False(M3SupervisedDesktopHost.IsInstalledProductServerPathEligible(local,
+            Path.Combine(local, "..", "TJ.RemoteAccess.Server.exe")));
+        Assert.False(M3SupervisedDesktopHost.IsInstalledProductServerPathEligible(
+            Path.Combine(local, "other-user"), good));
+    }
+
     [Theory]
     [InlineData("Default", true)]
     [InlineData("Winlogon", false)]

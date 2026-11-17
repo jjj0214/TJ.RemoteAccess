@@ -9,7 +9,8 @@ internal enum LabMessage : byte
 {
     Hello = 1, Welcome = 2, JpegFrame = 3, Key = 4,
     Pointer = 5, Status = 6, KeepAlive = 7,
-    PasswordLogin = 8
+    PasswordLogin = 8, Wheel = 9, FileRequest = 10, FileOffer = 11,
+    FileDecision = 12, FileBlock = 13, FileDone = 14, FileCancel = 15
 }
 internal enum LabRole : byte { ViewOnly = 0, Controller = 1 }
 internal readonly record struct LabPacket(LabMessage Type, byte[] Payload);
@@ -121,6 +122,24 @@ internal static class LabWire
         return new LabWelcome((LabRole)bytes[0], w, h,
             BinaryPrimitives.ReadInt32BigEndian(bytes.Slice(9, 4)),
             BinaryPrimitives.ReadInt32BigEndian(bytes.Slice(13, 4)));
+    }
+
+    internal static byte[] Wheel(short delta)
+    {
+        if (delta == 0 || delta < -960 || delta > 960)
+            throw new InvalidDataException("Invalid wheel delta.");
+        var bytes = new byte[2];
+        BinaryPrimitives.WriteInt16BigEndian(bytes, delta);
+        return bytes;
+    }
+
+    internal static short ParseWheel(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length != 2) throw new InvalidDataException("Invalid wheel packet.");
+        short delta = BinaryPrimitives.ReadInt16BigEndian(bytes);
+        if (delta == 0 || delta < -960 || delta > 960)
+            throw new InvalidDataException("Invalid wheel delta.");
+        return delta;
     }
 
     internal static byte[] Key(ushort virtualKey, bool pressed)

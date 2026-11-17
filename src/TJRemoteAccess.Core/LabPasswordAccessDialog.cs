@@ -11,7 +11,15 @@ internal static class LabPasswordAccessDialog
                               LabServerSettings settings,
                               System.Security.Cryptography.X509Certificates.X509Certificate2 cert)
     {
-        using var form = new Form {
+        using var form = CreateForm(access, settings, cert);
+        form.ShowDialog(owner);
+    }
+
+    internal static Form CreateForm(LabPasswordAccess access,
+                                    LabServerSettings settings,
+                                    System.Security.Cryptography.X509Certificates.X509Certificate2 cert)
+    {
+        var form = new Form {
             Text = "Password access (TLS required, separate port)",
             Width = 680, Height = 390, MinimumSize = new Size(590, 350),
             StartPosition = FormStartPosition.CenterParent,
@@ -125,9 +133,8 @@ internal static class LabPasswordAccessDialog
         layout.Controls.Add(buttons, 0, 6);
         layout.SetColumnSpan(buttons, 2);
         form.Controls.Add(layout);
-        form.ShowDialog(owner);
-        password.Clear();
-        again.Clear();
+        form.FormClosed += (_, _) => { password.Clear(); again.Clear(); };
+        return form;
 
         void Row(string label, Control ctrl, int row)
         {

@@ -10,7 +10,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+-preview$')]
-    [string]$Version = '0.5.4-preview',
+    [string]$Version = '0.5.5-preview',
     [ValidatePattern('^10\.0\.[0-9]+$')]
     [string]$RuntimeVersion = '10.0.15'
 )
@@ -109,8 +109,8 @@ foreach ($app in @('Server','Viewer','Setup')) {
         "-p:MSBuildProjectExtensionsPath=$obj",
         '-p:AppHostDotNetSearch=AppRelative',
         '-p:AppHostRelativeDotNet=../Runtime',
-        "-p:Version=$Version",'-p:AssemblyVersion=0.5.4.0',
-        '-p:FileVersion=0.5.4.0'
+        "-p:Version=$Version",'-p:AssemblyVersion=0.5.5.0',
+        '-p:FileVersion=0.5.5.0'
     )
     Run-Checked "$app isolated .NET 10/win-x64 NuGet restore" 'dotnet' (
         @('restore',$project,'-r','win-x64','--force','--nologo') + $msbuild

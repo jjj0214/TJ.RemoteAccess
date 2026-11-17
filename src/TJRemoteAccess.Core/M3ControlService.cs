@@ -15,6 +15,7 @@ internal sealed class M3ControlService : ServiceBase
     private readonly object _sync = new();
     private M3SessionLifecycle? _lifecycle;
     private readonly M3ServiceStatus _status = new();
+    private uint _approvedConsoleSession;
 
     internal M3ControlService()
     {
@@ -48,6 +49,9 @@ internal sealed class M3ControlService : ServiceBase
             // Default fail-closed: a protected operator policy must opt into
             // desktop hosting. A user enrollment in isolation is insufficient.
             bool allowDesktopHost = M3ServiceHostPolicyStore.IsEnabled();
+            uint console = M3WindowsSessionLauncher.ConsoleSessionId;
+            Volatile.Write(ref _approvedConsoleSession,
+                console is 0 or uint.MaxValue ? 0 : console);
             _lifecycle = new M3SessionLifecycle(
                 token => M3WindowsSessionLauncher.RunSessionOnceAsync(
                     token,
@@ -60,6 +64,11 @@ internal sealed class M3ControlService : ServiceBase
                 ex => {
                     _status.TryWrite("AgentFailed", diagnostic: ex.GetType().Name);
                     Trace.TraceWarning("M3 Agent stopped: " + ex.GetType().Name);
+                },
+                mayRetry: () => {
+                    uint approved = Volatile.Read(ref _approvedConsoleSession);
+                    return allowDesktopHost && M3ServiceHostPolicyStore.IsEnabled() &&
+                           approved != 0 && approved == M3WindowsSessionLauncher.ConsoleSessionId;
                 });
             _lifecycle.StartOrRebind();
         }
@@ -75,9 +84,15 @@ internal sealed class M3ControlService : ServiceBase
             // key, named pipe, process and session. Never resume old input.
             if (M3ServiceSessionPolicy.MayStartConsoleAgent(change.Reason,
                 change.SessionId, M3WindowsSessionLauncher.ConsoleSessionId))
+            {
+                Volatile.Write(ref _approvedConsoleSession, (uint)change.SessionId);
                 _lifecycle?.StartOrRebind();
+            }
             else
+            {
+                Volatile.Write(ref _approvedConsoleSession, 0);
                 _lifecycle?.Revoke();
+            }
         }
         base.OnSessionChange(change);
     }
@@ -96,6 +111,7 @@ internal sealed class M3ControlService : ServiceBase
         lock (_sync)
         {
             old = _lifecycle;
+            Volatile.Write(ref _approvedConsoleSession, 0);
             _lifecycle = null;
         }
         old?.Dispose();

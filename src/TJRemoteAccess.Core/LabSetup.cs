@@ -95,7 +95,7 @@ internal static class LabSetup
         using var server = LabCertificates.GenerateCertificate(server: true);
         using var client = LabCertificates.GenerateCertificate(server: false);
         var serverSettings = new LabServerSettings {
-            ListenAddress = "127.0.0.1",
+            ListenAddress = LabCertificates.DefaultListenAddress,
             Port = LabCertificates.DefaultPort,
             ServerCertificateThumbprint = server.Thumbprint,
             AllowedClientSha256 = LabCertificates.Hash(client)

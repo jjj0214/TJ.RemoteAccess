@@ -127,6 +127,25 @@ internal sealed class M3SupervisedDesktopHost : IDisposable
             PathTooLongException) { return false; }
     }
 
+    // Compact Setup installs Server under the signed-in owner's LocalAppData,
+    // while the privileged Service/Agent must stay in an admin-owned directory.
+    // Never load the Service DLL/EXE from this user-writable application path.
+    internal static bool IsInstalledProductServerPathEligible(string userLocalAppData,
+                                                               string exePath)
+    {
+        if (string.IsNullOrWhiteSpace(userLocalAppData) ||
+            string.IsNullOrWhiteSpace(exePath)) return false;
+        try
+        {
+            string expected = Path.GetFullPath(Path.Combine(userLocalAppData,
+                "Programs", "TJ.RemoteAccess", "Server", "TJ.RemoteAccess.Server.exe"));
+            return string.Equals(expected, Path.GetFullPath(exePath),
+                StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or
+            PathTooLongException) { return false; }
+    }
+
     internal static M3SupervisedDesktopHost? StartIfEnrolled()
     {
         if (!OperatingSystem.IsWindows() || !Environment.UserInteractive ||
@@ -137,7 +156,17 @@ internal sealed class M3SupervisedDesktopHost : IDisposable
 
         string baseDirectory = AppContext.BaseDirectory;
         string exe = Path.GetFullPath(Path.Combine(baseDirectory, "TJ.RemoteAccess.Server.exe"));
-        if (!IsExecutablePathEligible(baseDirectory, exe) || !File.Exists(exe) ||
+        if (!File.Exists(exe))
+        {
+            string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            exe = Path.GetFullPath(Path.Combine(local, "Programs", "TJ.RemoteAccess",
+                "Server", "TJ.RemoteAccess.Server.exe"));
+            if (!IsInstalledProductServerPathEligible(local, exe))
+                throw new FileNotFoundException("Untrusted installed Server path.");
+        }
+        else if (!IsExecutablePathEligible(baseDirectory, exe))
+            throw new FileNotFoundException("Server must be in the Agent directory.");
+        if (!File.Exists(exe) ||
             (File.GetAttributes(exe) & FileAttributes.ReparsePoint) != 0)
             throw new FileNotFoundException("Approved local Server executable missing.");
         SafeFileHandle job = CreateJobObject(IntPtr.Zero, null);
@@ -160,7 +189,7 @@ internal sealed class M3SupervisedDesktopHost : IDisposable
                 "\"" + exe + "\" --allow-lan --auto-start");
             if (!CreateProcess(exe, commandLine, IntPtr.Zero, IntPtr.Zero,
                                false, CreateSuspended, IntPtr.Zero,
-                               baseDirectory, ref startup, out ProcessInfo result))
+                               Path.GetDirectoryName(exe), ref startup, out ProcessInfo result))
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "Desktop Server start failed.");
 
             using var thread = new SafeFileHandle(result.Thread, ownsHandle: true);

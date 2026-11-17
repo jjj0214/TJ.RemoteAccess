@@ -60,7 +60,7 @@ internal sealed class LabServerTray : IDisposable
     private static extern bool DestroyIcon(IntPtr handle);
 
     internal LabServerTray(Action open, Action start, Action stop,
-                           Action clients, Action password,
+                           Action manageAccess,
                            Action toggleServiceSupervision, Action exit)
     {
         _inactiveIcon = DrawIcon(Color.FromArgb(108, 118, 128));
@@ -77,8 +77,7 @@ internal sealed class LabServerTray : IDisposable
         _menu.Items.Add(_start);
         _menu.Items.Add(_stop);
         _menu.Items.Add(new ToolStripSeparator());
-        _menu.Items.Add("Client access...", null, (_, _) => clients());
-        _menu.Items.Add("Password access...", null, (_, _) => password());
+        _menu.Items.Add("Access && security...", null, (_, _) => manageAccess());
         _serviceSupervision = new ToolStripMenuItem("Allow Windows service supervision",
             null, (_, _) => toggleServiceSupervision());
         _menu.Items.Add(_serviceSupervision);

@@ -21,6 +21,11 @@
     <Compile Include="preview_isolation_tests.cs" />
     <Compile Include="preview_tray_tests.cs" />
     <Compile Include="preview_quick_password_tests.cs" />
+    <Compile Include="preview_installed_server_tests.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\LabServerLaunch.cs" />
+    <Compile Include="preview_file_transfer_tests.cs" />
+    <Compile Include="preview_file_transfer_tls_tests.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\LabFileTransferPeer.cs" />
     <Compile Include="preview_installer_tests.cs" />
     <Compile Include="preview_offline_archive_integration_tests.cs" />
     <Compile Include="preview_offline_builder_end_to_end_tests.cs" />

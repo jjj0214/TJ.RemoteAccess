@@ -57,9 +57,28 @@ internal static class LabServerProgram
     {
         try
         {
-            var settings = LabCertificates.LoadSettings<LabServerSettings>(LabCertificates.ServerFile);
             var launch = LabServerLaunchOptions.Parse(args);
+#if TJRA_STANDALONE_PREVIEW
+            if (!File.Exists(LabCertificates.ServerFile))
+            {
+                // An opt-in startup shortcut must not show an error every logon
+                // while the owner's TLS identity has not been initialized yet.
+                if (!launch.AutoStart)
+                    MessageBox.Show("Initial Server setup is required. Run " +
+                        "TJ.RemoteAccess.Setup.exe init using your own Windows account. " +
+                        "Then start Server again. No firewall changes are made.",
+                        "TJ.RemoteAccess - first use", MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                return;
+            }
+#endif
+            var settings = LabCertificates.LoadSettings<LabServerSettings>(LabCertificates.ServerFile);
             bool explicitlyAllowLan = launch.AllowLan;
+#if TJRA_STANDALONE_PREVIEW
+            // Installed Server can be opened directly without a fragile launch flag.
+            // Authentication and pinned TLS remain mandatory; no firewall rules change.
+            explicitlyAllowLan |= LabServerLaunchOptions.IsInstalledPreviewServer(AppContext.BaseDirectory);
+#endif
             if (!IPAddress.TryParse(settings.ListenAddress, out var ip))
                 throw new InvalidDataException("ListenAddress must be an explicit IP address.");
             if (!IPAddress.IsLoopback(ip) && !explicitlyAllowLan)
@@ -119,8 +138,12 @@ internal sealed class LabServerForm : Form
     };
     private readonly Button _start = new() { Text = "Start (interactive session)" };
     private readonly Button _stopButton = new() { Text = "Stop", Enabled = false };
+#if TJRA_STANDALONE_PREVIEW
+    private readonly Button _accessButton = new() { Text = "Access && security", AutoSize = true };
+#else
     private readonly Button _clientsButton = new() { Text = "Client access", AutoSize = true };
     private readonly Button _passwordButton = new() { Text = "Password access", AutoSize = true };
+#endif
     private readonly object _guard = new();
     private readonly HashSet<Guid> _sessions = new();
     private Guid? _controller;
@@ -163,21 +186,28 @@ internal sealed class LabServerForm : Form
         _stopButton.AutoSize = true;
         controls.Controls.Add(_start);
         controls.Controls.Add(_stopButton);
+#if TJRA_STANDALONE_PREVIEW
+        controls.Controls.Add(_accessButton);
+#else
         controls.Controls.Add(_clientsButton);
         controls.Controls.Add(_passwordButton);
+#endif
         Controls.Add(_events);
         Controls.Add(_summary);
         Controls.Add(controls);
         _start.Click += (_, _) => StartServer();
         _stopButton.Click += (_, _) => StopServer();
+#if TJRA_STANDALONE_PREVIEW
+        _accessButton.Click += (_, _) => ShowAccessManager();
+#else
         _clientsButton.Click += (_, _) => ShowClientAccess();
         _passwordButton.Click += (_, _) => ShowPasswordAccess();
+#endif
 #if TJRA_STANDALONE_PREVIEW
         _serviceSupervisionEnabled =
             TJ.RemoteAccess.M3.M3DesktopEnrollmentStore.IsEnabledForCurrentUser();
         _tray = new LabServerTray(RestoreFromTray, StartServer, StopServer,
-                                  () => { RestoreFromTray(); ShowClientAccess(); },
-                                  () => { RestoreFromTray(); ShowPasswordAccess(); },
+                                  () => { RestoreFromTray(); ShowAccessManager(); },
                                   ToggleServiceSupervision, Close);
         FormClosing += (_, e) => {
             if (_tray.ShouldHideOnClose(e.CloseReason)) {
@@ -274,6 +304,20 @@ internal sealed class LabServerForm : Form
         }
         else Suspend();
     }
+
+#if TJRA_STANDALONE_PREVIEW
+    private void ShowAccessManager()
+    {
+        bool restart = LabServerAccessManager.Show(this, _clientRoster,
+            _passwordAccess, _settings, _serverCert);
+        if (restart && _listener is not null)
+        {
+            Log("Password policy updated; restarting TLS listeners.");
+            StopServer();
+            StartServer();
+        }
+    }
+#endif
 
     private void ShowClientAccess()
     {
@@ -637,6 +681,23 @@ internal sealed class LabServerForm : Form
                 handshakePermit = false;
                 Log($"{(passwordMode ? "Password TLS" : "Mutual TLS")} client connected ({role}).");
                 using var writeMutex = new SemaphoreSlim(1, 1);
+#if TJRA_STANDALONE_PREVIEW
+                using var fileTransfer = new LabFileTransferPeer(tls, writeMutex, token,
+                    () => {
+                        lock (_guard)
+                        {
+                            if (!_running || _controller != session || !_sessions.Contains(session))
+                                return false;
+                        }
+                        if (!TJ.RemoteAccess.M3.M3InteractiveDesktopGuard.IsNormalInteractiveDesktop())
+                            return false;
+                        if (passwordMode)
+                            return _passwordAccess.IsSessionAuthorized(passwordVerifier, true);
+                        return _clientRoster.GetAuthorized(clientPin) is { CanControl: true };
+                    },
+                    offer => LabFileTransferDialogs.DestinationAsync(this, offer),
+                    () => LabFileTransferDialogs.ServerFileAsync(this), Log);
+#endif
                 await LabWire.WriteAsync(tls, writeMutex, LabMessage.Welcome,
                     LabWire.Welcome(new LabWelcome(role, _desktop.Width, _desktop.Height,
                                                    _desktop.Left, _desktop.Top)), token);
@@ -658,7 +719,13 @@ internal sealed class LabServerForm : Form
                     while (!token.IsCancellationRequested)
                     {
                         var packet = await LabWire.ReadAsync(
-                            tls, token, LabWire.MaxControlPacketBytes)
+                            tls, token,
+#if TJRA_STANDALONE_PREVIEW
+                            LabFileTransferWire.MaxPacketBytes
+#else
+                            LabWire.MaxControlPacketBytes
+#endif
+                        )
                             .WaitAsync(TimeSpan.FromSeconds(25), token);
                         if (passwordMode)
                         {
@@ -675,7 +742,14 @@ internal sealed class LabServerForm : Form
                         // turn a view-only session into a controller.
                         if (packet.Type == LabMessage.KeepAlive && packet.Payload.Length == 0)
                             continue;
-                        if (packet.Type is not (LabMessage.Key or LabMessage.Pointer))
+#if TJRA_STANDALONE_PREVIEW
+                        if (LabFileTransferWire.IsFilePacket(packet.Type))
+                        {
+                            await fileTransfer.HandleAsync(packet);
+                            continue;
+                        }
+#endif
+                        if (packet.Type is not (LabMessage.Key or LabMessage.Pointer or LabMessage.Wheel))
                             throw new InvalidDataException("Unexpected viewer packet.");
                         lock (_guard)
                         {
@@ -694,6 +768,9 @@ internal sealed class LabServerForm : Form
                             if (packet.Type == LabMessage.Key) {
                                 var key = LabWire.ParseKey(packet.Payload);
                                 LabNativeInput.ApplyKey(_pressedKeys, key.Key, key.Pressed);
+                            }
+                            else if (packet.Type == LabMessage.Wheel) {
+                                LabNativeInput.ApplyWheel(LabWire.ParseWheel(packet.Payload));
                             }
                             else {
                                 var pointer = LabWire.ParsePointer(packet.Payload);
@@ -847,6 +924,7 @@ internal static class LabNativeInput
     private const uint LEFTDOWN = 0x0002, LEFTUP = 0x0004;
     private const uint RIGHTDOWN = 0x0008, RIGHTUP = 0x0010;
     private const uint MIDDLEDOWN = 0x0020, MIDDLEUP = 0x0040;
+    private const uint MOUSEEVENTF_WHEEL = 0x0800;
 
     [DllImport("user32.dll")] private static extern void keybd_event(byte vk, byte scan,
         uint flags, UIntPtr extra);
@@ -863,6 +941,12 @@ internal static class LabNativeInput
             keybd_event((byte)vk, 0, 0, UIntPtr.Zero);
         else if (!down && pressed.Remove(vk))
             keybd_event((byte)vk, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+    }
+
+    internal static void ApplyWheel(short delta)
+    {
+        // Called only after the same controller/desktop gate as mouse input.
+        mouse_event(MOUSEEVENTF_WHEEL, 0, 0, unchecked((uint)delta), UIntPtr.Zero);
     }
 
     internal static void ApplyPointer(Rectangle desktop, ushort x, ushort y,

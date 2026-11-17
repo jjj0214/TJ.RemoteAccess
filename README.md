@@ -48,7 +48,7 @@ for concrete implementation blockers. The static audit never approves deployment
   certificate-bound `service-host enable --confirm-local-owner` enrollment are
   required. Default is status-only, and a Job object kills the Server if its
   user Agent dies. Winlogon, lock screen, UAC/secure desktop are **denied**.
-- **0.5.4-preview compact offline installer (new parallel delivery):**
+- **0.5.5-preview compact offline installer (Server/Viewer UX and transfer update):**
   Native Inno Setup 6 produces ONE install EXE (no managed Installer runtime).
   Server/Viewer/Setup are .NET 10 framework-dependent, each apphost searches
   ONLY ../Runtime. Microsoft .NET 10.0.15 Core and WindowsDesktop runtime ZIPs
@@ -60,7 +60,15 @@ for concrete implementation blockers. The static audit never approves deployment
   compact-installer.yml CI job. The old 0.5.3 installer is retained as fallback.
   New compact CI requires .NET 10 SDK/Inno Setup 6; the existing local machine
   currently only has SDK 9.0.318, so it validates legacy paths separately.
-  Instructions: docs/COMPACT_INSTALLER_0_5_4_20261116_KO.md.
+  0.5.5 adds an installed Server LAN shortcut, one Access/Security manager,
+  optional signed-in-user startup, Viewer scale/fullscreen/pause/resume,
+  local view-only, normal-desktop key chords, wheel and TLS file transfer
+  with receiver approval, SHA-256 and a strict 512 MiB/file cap.
+  Optional M3 supervision has bounded I/O recovery and resolves the installed
+  current-user Compact Server, but the LocalSystem service still has a
+  separate administrator-owned opt-in installation and cannot control
+  Winlogon/UAC or a user who has not logged on.
+  Instructions: docs/COMPACT_VIEWER_UX_0_5_5_20261117_KO.md.
 - Standalone **0.5.3-preview graphical installer**:
   `TJ.RemoteAccess.Installer.exe` is self-contained for Windows x64,
   double-clickable (no PowerShell or .NET SDK needed on the target PC).

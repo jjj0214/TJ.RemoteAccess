@@ -8,7 +8,7 @@ namespace TJ.RemoteAccess.Lab;
 
 internal sealed class LabServerSettings
 {
-    public string ListenAddress { get; set; } = "127.0.0.1";
+    public string ListenAddress { get; set; } = LabCertificates.DefaultListenAddress;
     public int Port { get; set; } = LabCertificates.DefaultPort;
     public string ServerCertificateThumbprint { get; set; } = "";
     public string AllowedClientSha256 { get; set; } = "";
@@ -27,9 +27,11 @@ internal static class LabCertificates
     // Product preview uses its OWN user-owned configuration and certificates.
     // Never migrate/overwrite Lab or TightVNC profiles implicitly.
     internal const string DirectoryName = "TJ.RemoteAccess";
+    internal const string DefaultListenAddress = "0.0.0.0";
     internal const int DefaultPort = 15544;
 #else
     internal const string DirectoryName = "TJ.RemoteAccess.Lab";
+    internal const string DefaultListenAddress = "127.0.0.1";
     internal const int DefaultPort = 15444;
 #endif
     internal const string ServerEku = "1.3.6.1.5.5.7.3.1";

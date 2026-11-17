@@ -36,7 +36,7 @@ internal static class LabViewerProgram
     }
 }
 
-internal sealed class LabViewerForm : Form
+internal sealed partial class LabViewerForm : Form
 {
     private readonly LabViewerProfileStore _profileStore;
     private readonly ComboBox _profilePicker = new() {
@@ -67,6 +67,28 @@ internal sealed class LabViewerForm : Form
         Dock = DockStyle.Fill, BackColor = Color.FromArgb(30, 30, 30),
         SizeMode = PictureBoxSizeMode.Zoom
     };
+#if TJRA_STANDALONE_PREVIEW
+    private readonly Panel _viewport = new() {
+        Dock = DockStyle.Fill, AutoScroll = true, BackColor = Color.FromArgb(30, 30, 30)
+    };
+    private readonly ComboBox _zoom = new() {
+        Width = 85, DropDownStyle = ComboBoxStyle.DropDownList
+    };
+    private readonly CheckBox _viewOnly = new() { Text = "View only", AutoSize = true };
+    private readonly Button _pause = new() { Text = "Pause image", AutoSize = true };
+    private readonly Button _refresh = new() { Text = "Resume / refresh", AutoSize = true };
+    private readonly Button _keys = new() { Text = "Send keys", AutoSize = true };
+    private readonly Button _fullScreen = new() { Text = "Full screen", AutoSize = true };
+    private readonly Button _options = new() { Text = "Connection options", AutoSize = true };
+    private readonly Button _sendFile = new() { Text = "Send file", AutoSize = true };
+    private readonly Button _receiveFile = new() { Text = "Receive file", AutoSize = true };
+    private bool _paused;
+    private bool _isFullScreen;
+    private Rectangle _restoreBounds;
+    private LabFileTransferPeer? _fileTransfer;
+    // Network receive runs off the UI thread: never read CheckBox.Checked there.
+    private int _viewOnlySnapshot;
+#endif
     private readonly SemaphoreSlim _outgoingMutex = new(1);
     private readonly HashSet<ushort> _heldKeys = new();
     private CancellationTokenSource? _stop;
@@ -125,7 +147,27 @@ internal sealed class LabViewerForm : Form
         toolbar.Controls.Add(_port);
         toolbar.Controls.Add(_connect);
         toolbar.Controls.Add(_disconnect);
+#if TJRA_STANDALONE_PREVIEW
+        _zoom.Items.AddRange(new object[] {
+            "Fit", "50%", "75%", "100%", "125%", "150%", "200%"
+        });
+        _zoom.SelectedIndex = 0;
+        toolbar.Controls.Add(new Label { Text = "Zoom", AutoSize = true,
+            Padding = new Padding(0, 6, 0, 0) });
+        toolbar.Controls.Add(_zoom);
+        toolbar.Controls.Add(_viewOnly);
+        toolbar.Controls.Add(_pause);
+        toolbar.Controls.Add(_refresh);
+        toolbar.Controls.Add(_keys);
+        toolbar.Controls.Add(_sendFile);
+        toolbar.Controls.Add(_receiveFile);
+        toolbar.Controls.Add(_fullScreen);
+        toolbar.Controls.Add(_options);
+        _viewport.Controls.Add(_picture);
+        Controls.Add(_viewport);
+#else
         Controls.Add(_picture);
+#endif
         Controls.Add(_status);
         Controls.Add(toolbar);
         _connect.Click += async (_, _) => await ConnectAsync();
@@ -140,13 +182,37 @@ internal sealed class LabViewerForm : Form
         };
         _refreshProfile.Click += (_, _) => ReloadProfiles();
         _disconnect.Click += (_, _) => Disconnect();
+#if TJRA_STANDALONE_PREVIEW
+        toolbar.Height = 122;
+        _zoom.SelectedIndexChanged += (_, _) => SetZoom();
+        _pause.Click += (_, _) => SetPaused(true);
+        _refresh.Click += (_, _) => SetPaused(false);
+        _keys.Click += (_, _) => ShowSpecialKeys();
+        _fullScreen.Click += (_, _) => ToggleFullScreen();
+        _options.Click += (_, _) => ShowConnectionOptions();
+        _viewOnly.CheckedChanged += async (_, _) => {
+            Volatile.Write(ref _viewOnlySnapshot, _viewOnly.Checked ? 1 : 0);
+            if (_viewOnly.Checked) await ReleaseHeldKeysAsync();
+            UpdateProfileControls();
+        };
+        _sendFile.Click += async (_, _) => await SendFileFromViewerAsync();
+        _receiveFile.Click += async (_, _) => {
+            if (CanControl && _fileTransfer is not null)
+                await _fileTransfer.RequestDownloadAsync();
+        };
+#endif
         _picture.MouseDown += async (_, e) => {
             _picture.Focus();
             await SendPointerAsync(e.Location, force: true);
         };
         _picture.MouseMove += async (_, e) => await SendPointerAsync(e.Location);
         _picture.MouseUp += async (_, e) => await SendPointerAsync(e.Location, force: true);
-        _picture.MouseWheel += (_, _) => { }; // wheel is unsupported in M2 Lab
+        _picture.MouseWheel += async (_, e) => {
+            if (CanControl && e.Delta != 0) {
+                short delta = (short)Math.Clamp(e.Delta, -960, 960);
+                await SendAsync(LabMessage.Wheel, LabWire.Wheel(delta));
+            }
+        };
         KeyDown += async (_, e) => await OnRemoteKey(e, pressed: true);
         KeyUp += async (_, e) => await OnRemoteKey(e, pressed: false);
         Deactivate += async (_, _) => await ReleaseHeldKeysAsync();
@@ -170,7 +236,11 @@ internal sealed class LabViewerForm : Form
 #endif
     }
 
-    private bool CanControl => _connected && _role == LabRole.Controller;
+    private bool CanControl => _connected && _role == LabRole.Controller
+#if TJRA_STANDALONE_PREVIEW
+        && Volatile.Read(ref _viewOnlySnapshot) == 0
+#endif
+        ;
 
 private LabViewerProfile? SelectedProfile =>
         _profilePicker.SelectedItem as LabViewerProfile;
@@ -257,6 +327,13 @@ private LabViewerProfile? SelectedProfile =>
         _port.Enabled = !busy && SelectedProfile is not null;
         _connect.Enabled = !busy && SelectedProfile is not null;
         _disconnect.Enabled = busy;
+#if TJRA_STANDALONE_PREVIEW
+        _pause.Enabled = _connected && !_paused;
+        _refresh.Enabled = _connected;
+        _keys.Enabled = CanControl;
+        _sendFile.Enabled = CanControl;
+        _receiveFile.Enabled = CanControl;
+#endif
     }
 
     private void AddServerProfile()
@@ -444,6 +521,14 @@ private LabViewerProfile? SelectedProfile =>
             _desktopHeight = metadata.Height;
             _role = metadata.Role;
             _connected = true;
+#if TJRA_STANDALONE_PREVIEW
+            SetZoom();
+            _paused = false;
+            _fileTransfer = new LabFileTransferPeer(_tls, _outgoingMutex, token,
+                () => CanControl,
+                offer => LabFileTransferDialogs.DestinationAsync(this, offer),
+                null, ShowStatus);
+#endif
             _status.Text = $"Connected to {profile.Name} ({_role}), desktop {_desktopWidth}x{_desktopHeight}. " +
                            "Secure desktop/UAC not supported.";
             // JPEG decode runs off UI thread; only final bitmap swap uses UI.
@@ -470,8 +555,22 @@ private LabViewerProfile? SelectedProfile =>
                 using var frameDeadline = CancellationTokenSource.CreateLinkedTokenSource(token);
                 frameDeadline.CancelAfter(TimeSpan.FromSeconds(25));
                 var packet = await LabWire.ReadAsync(stream, frameDeadline.Token);
+#if TJRA_STANDALONE_PREVIEW
+                if (LabFileTransferWire.IsFilePacket(packet.Type))
+                {
+                    if (_fileTransfer is null)
+                        throw new InvalidDataException("File transfer unavailable.");
+                    await _fileTransfer.HandleAsync(packet);
+                    continue;
+                }
+#endif
                 if (packet.Type != LabMessage.JpegFrame)
                     throw new InvalidDataException("Unexpected server packet.");
+#if TJRA_STANDALONE_PREVIEW
+                // Pause only the local display; continue reading the TLS stream
+                // so video packets cannot accumulate in memory or stall keepalives.
+                if (_paused) continue;
+#endif
                 if (packet.Payload.Length < 4 ||
                     packet.Payload[0] != 0xFF || packet.Payload[1] != 0xD8)
                     throw new InvalidDataException("Invalid JPEG frame.");
@@ -578,6 +677,16 @@ private LabViewerProfile? SelectedProfile =>
 
     private async Task OnRemoteKey(KeyEventArgs e, bool pressed)
     {
+#if TJRA_STANDALONE_PREVIEW
+        if (pressed && _isFullScreen && e.KeyCode == Keys.Escape)
+        {
+            ToggleFullScreen();
+            e.SuppressKeyPress = true;
+            return;
+        }
+        // Do not send text typed into local host/profile/toolbar controls.
+        if (!_picture.Focused) return;
+#endif
         if (!CanControl) return;
         ushort vk = (ushort)e.KeyCode;
         if (vk is < 1 or > 254) return;
@@ -589,7 +698,7 @@ private LabViewerProfile? SelectedProfile =>
 
     private async Task ReleaseHeldKeysAsync()
     {
-        if (!CanControl) {
+        if (!_connected || _role != LabRole.Controller) {
             _heldKeys.Clear();
             return;
         }
@@ -647,6 +756,11 @@ private LabViewerProfile? SelectedProfile =>
         _heldKeys.Clear();
         _role = LabRole.ViewOnly;
         _frameCount = 0;
+#if TJRA_STANDALONE_PREVIEW
+        _fileTransfer?.Dispose();
+        _fileTransfer = null;
+        _paused = false;
+#endif
         var oldImage = _picture.Image;
         _picture.Image = null;
         oldImage?.Dispose();
