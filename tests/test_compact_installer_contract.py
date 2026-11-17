@@ -164,6 +164,10 @@ class CompactNativeInstallerContract(unittest.TestCase):
 
     def test_final_gate_uploads_source_hash_and_full_install_logs(self):
         self.assertIn("feature/chatgpt-compact-native-verify", self.ci)
+        self.assertIn("      - main", self.ci)
+        self.assertIn("compact-metrics:", self.ci)
+        self.assertIn("installer_sha16", self.ci)
+        self.assertIn("id: package_metrics", self.ci)
         self.assertIn("out/compact-dist/source.zip", self.ci)
         self.assertIn("TJRA-Compact-Install-Logs/", self.ci)
         self.assertIn("Audit real compact installer component and license paths", self.ci)

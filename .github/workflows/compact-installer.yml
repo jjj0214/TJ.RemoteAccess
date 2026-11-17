@@ -5,6 +5,7 @@ name: TJ.RemoteAccess Compact Installer
 on:
   push:
     branches:
+      - main
       - feature/chatgpt-m2-engine-foundation
       - feature/chatgpt-compact-native-verify
     paths:
@@ -24,6 +25,8 @@ jobs:
     runs-on: windows-latest
     outputs:
       build_error: ${{ steps.package_compile.outputs.message }}
+      installer_size: ${{ steps.package_metrics.outputs.installer_size }}
+      installer_sha16: ${{ steps.package_metrics.outputs.installer_sha16 }}
     timeout-minutes: 90
     steps:
       - name: Checkout exact GPL source
@@ -185,6 +188,7 @@ jobs:
           Write-Host 'Native installer uninstall and GPL source-presence verified.'
 
       - name: Verify runtime provenance and package-size report
+        id: package_metrics
         shell: pwsh
         run: |
           $r = Get-Content .\out\compact-dist\compact-size-report.json -Raw | ConvertFrom-Json
@@ -198,6 +202,9 @@ jobs:
           if ($r.bytes -lt 1000000) { throw 'Implausible installer size' }
           Write-Host "Installer size: $($r.bytes) bytes"
           Write-Host "One shared runtime: $($r.runtimeBytes) bytes"
+          if ($r.sha256 -notmatch '^[a-fA-F0-9]{64}$') { throw 'Missing installer SHA-256' }
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "installer_size=$($r.bytes)"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "installer_sha16=$(([string]$r.sha256).Substring(0,16))"
 
       - name: Upload test diagnostics even if failed
         if: always()
@@ -232,3 +239,12 @@ jobs:
     steps:
       - name: Report bounded failure reason for read-only Actions tools
         run: echo 'See compact Windows packaging diagnostic artifact'
+
+  compact-metrics:
+    needs: compact-windows
+    if: ${{ needs.compact-windows.result == 'success' }}
+    name: "Compact PASS ${{ needs.compact-windows.outputs.installer_size }} bytes SHA16 ${{ needs.compact-windows.outputs.installer_sha16 }}"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish validated artifact metrics for read-only Actions inspection
+        run: echo 'See compact-size-report.json and EXE.sha256 in the validated installer artifact'
