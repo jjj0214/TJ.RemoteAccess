@@ -9,7 +9,7 @@
 신규 0.5.4 Compact 패키지 구성:
 - 하나의 네이티브 Inno Setup 6 설치 EXE. 사용자 PC에 .NET SDK, 별도 런타임, PowerShell 또는 네트워크 필요 없음
 - Server/Viewer/Setup은 .NET 10 FDD(Framework-dependent) Win-x64
-- Runtime은 Microsoft Windows Desktop Runtime 10.0.15 단 한 벌로, 설치 루트 Runtime 폴더에 위치
+- Runtime은 공식 .NET Core Runtime + Windows Desktop Runtime 10.0.15 ZIP을 각각 SHA-512 검증 후 설치 루트 Runtime 폴더 한 벌로 통합 (앱별 중복 없음)
 - 앱 호스트는 AppHostDotNetSearch=AppRelative 및 AppHostRelativeDotNet=../Runtime로 고정; 시스템에 설치된 .NET과 무관
 - 선택 가능한 구성: Both / Server / Viewer. Setup과 Runtime은 공유 필수 구성
 - GPL 소스의 동일 Git 커밋 snapshot(source.zip), LICENSE, THIRD_PARTY_NOTICES.md를 설치 EXE 안에 포함
@@ -31,9 +31,9 @@ Inno Setup의 Restart Manager와 사용자 모드 설치를 활용한다. 레지
 
 ## 런타임 출처 및 무결성
 
-빌드 스크립트는 Microsoft .NET 10 공식 release-metadata/10.0/releases.json을 HTTPS로 읽고 정확한 10.0.15 WindowsDesktop win-x64 ZIP URL과 SHA-512를 확인한다. URI/버전/해시가 일치하지 않으면 패키지를 생성하지 않는다.
+빌드 스크립트는 Microsoft .NET 10 공식 release-metadata/10.0/releases.json을 HTTPS로 읽고 정확한 10.0.15 Core Runtime 및 WindowsDesktop win-x64 ZIP의 URL과 각 SHA-512를 독립 검증한다. URI/버전/해시가 하나라도 일치하지 않으면 패키지를 생성하지 않는다.
 
-동봉하는 runtime-provenance.json에는 URL, SHA-512, 릴리즈 버전, 소스 Git 커밋, Runtime 원본 크기를 기록한다.
+동봉하는 runtime-provenance.json에는 Desktop/Core 각각의 URL·SHA-512, 릴리즈 버전, 소스 Git 커밋 및 통합 Runtime 크기를 기록한다.
 
 IL Trimming/ReadyToRun은 WinForms/Reflection/인증 호환성 검증 전까지 사용하지 않는다. 네이티브 설치기를 사용하므로 별도 Self-contained Installer 런타임은 필요하지 않다.
 
@@ -41,7 +41,7 @@ IL Trimming/ReadyToRun은 WinForms/Reflection/인증 호환성 검증 전까지 
 
 - 로컬 .NET 9 SDK: 기존 Preview/Lab/Agent xUnit, PowerShell AST, Python 계약 검증
 - GitHub Windows SDK10: Server/Viewer/Setup FDD 게시 및 .runtimeconfig/deps/apphost 확인
-- SHA-512로 검증된 공용 Runtime 딱 한 벌 포함 확인
+- SHA-512로 각각 검증된 Core + Desktop ZIP을 하나의 공용 Runtime 폴더로 통합했는지 확인
 - DOTNET_ROOT가 잘못된 경로라도 Setup.exe service-host status가 공용 Runtime으로 실행되는지 시험
 - Native Inno Setup EXE 무인 Viewer-only 설치, Both 업데이트, 설치 파일/런타임 확인, 제거 및 개인 설정 보존 시험
 - Size report JSON과 Installer SHA-256을 산출물로 함께 제공
@@ -65,7 +65,7 @@ IL Trimming/ReadyToRun은 WinForms/Reflection/인증 호환성 검증 전까지 
 
 ## 개발용 패키징
 
-새 Compact 빌드는 .NET 10 SDK, Inno Setup 6, Microsoft 공식 런타임 ZIP 다운로드가 필요하다. 현재 개발 PC에는 .NET SDK 9.0.318만 설치되어 있어 .NET 10 게시와 네이티브 패키지의 실기 검증은 GitHub Actions Windows Runner에서 수행한다.
+새 Compact 빌드는 .NET 10 SDK, Inno Setup 6, Microsoft 공식 Core/WindowsDesktop 런타임 ZIP 다운로드가 필요하다. 현재 개발 PC에는 .NET SDK 9.0.318만 설치되어 있어 .NET 10 게시와 네이티브 패키지의 실기 검증은 GitHub Actions Windows Runner에서 수행한다.
 
   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-TJRemoteAccess-CompactInstaller.ps1 -Version 0.5.4-preview -RuntimeVersion 10.0.15
 

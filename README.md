@@ -51,9 +51,9 @@ for concrete implementation blockers. The static audit never approves deployment
 - **0.5.4-preview compact offline installer (new parallel delivery):**
   Native Inno Setup 6 produces ONE install EXE (no managed Installer runtime).
   Server/Viewer/Setup are .NET 10 framework-dependent, each apphost searches
-  ONLY ../Runtime, and the Microsoft .NET 10.0.15 LTS WindowsDesktop runtime
-  is embedded ONCE under the common Runtime folder. The private runtime ZIP
-  is authenticated against Microsoft's official SHA-512 metadata.
+  ONLY ../Runtime. Microsoft .NET 10.0.15 Core and WindowsDesktop runtime ZIPs
+  are independently SHA-512 authenticated against official release metadata,
+  then merged ONCE into the common private Runtime folder (no duplicate hosts).
   Component choices: Server+Setup, Viewer+Setup, Both; GPL corresponding
   source.zip is embedded in the EXE. Per-user install, update/uninstall, and
   LocalAppData TLS/profile preservation are tested in a dedicated Windows

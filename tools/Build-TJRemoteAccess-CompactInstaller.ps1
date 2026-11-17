@@ -79,6 +79,7 @@ $runtime = Join-Path $stage 'Runtime'
 $downloadDir = Join-Path $root 'out\compact-download'
 $dist = Join-Path $root 'out\compact-dist'
 $runtimeZip = Join-Path $downloadDir "windowsdesktop-runtime-$RuntimeVersion-win-x64.zip"
+$coreRuntimeZip = Join-Path $downloadDir "dotnet-runtime-$RuntimeVersion-win-x64.zip"
 $setupExe = Join-Path $dist "TJ.RemoteAccess-$Version-Compact-Setup-win-x64.exe"
 $sourceZip = Join-Path $dist 'source.zip'
 $provenance = Join-Path $dist 'runtime-provenance.json'
@@ -130,7 +131,7 @@ foreach ($app in @('Server','Viewer','Setup')) {
         throw "$app publish targeted wrong .NET framework."
     }
 }
-Write-Host '[2/7] Resolve SHA-512-authenticated Microsoft Desktop Runtime ZIP...'
+Write-Host '[2/7] Resolve SHA-512-authenticated Microsoft Core + Desktop Runtime ZIPs...'
 $metadataUrl = 'https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json'
 $metadata = Invoke-RestMethod -Uri $metadataUrl -TimeoutSec 60
 $release = @($metadata.releases | Where-Object { $_.'release-version' -eq $RuntimeVersion })
@@ -148,6 +149,17 @@ if ($url.Scheme -ne 'https' -or $url.Host -ne 'builds.dotnet.microsoft.com' -or
     [string]$asset.hash -notmatch '^[a-fA-F0-9]{128}$') {
     throw 'Official Microsoft Runtime URL/hash verification failed.'
 }
+$coreAssets = @($release[0].runtime.files | Where-Object {
+    $_.rid -eq 'win-x64' -and $_.name -eq 'dotnet-runtime-win-x64.zip'
+})
+if ($coreAssets.Count -ne 1) { throw 'Missing Microsoft win-x64 Core Runtime ZIP metadata.' }
+$coreAsset = $coreAssets[0]
+$coreUrl = [Uri]::new([string]$coreAsset.url)
+if ($coreUrl.Scheme -ne 'https' -or $coreUrl.Host -ne 'builds.dotnet.microsoft.com' -or
+    $coreUrl.AbsolutePath -ne "/dotnet/Runtime/$RuntimeVersion/dotnet-runtime-$RuntimeVersion-win-x64.zip" -or
+    [string]$coreAsset.hash -notmatch '^[a-fA-F0-9]{128}$') {
+    throw 'Official Microsoft Core Runtime URL/hash verification failed.'
+}
 if (-not (Test-Path -LiteralPath $runtimeZip -PathType Leaf)) {
     Invoke-WebRequest -Uri $url.AbsoluteUri -OutFile $runtimeZip -TimeoutSec 180
 }
@@ -157,9 +169,37 @@ if (-not [string]::Equals($actualSha512,[string]$asset.hash,
     Remove-Item -LiteralPath $runtimeZip -Force -ErrorAction SilentlyContinue
     throw 'Microsoft Desktop Runtime ZIP SHA-512 mismatch; refusing build.'
 }
-Write-Host '[3/7] Stage runtime ONCE, isolated from global .NET...'
+if (-not (Test-Path -LiteralPath $coreRuntimeZip -PathType Leaf)) {
+    Invoke-WebRequest -Uri $coreUrl.AbsoluteUri -OutFile $coreRuntimeZip -TimeoutSec 180
+}
+$coreActualSha512 = Sha512-File $coreRuntimeZip
+if (-not [string]::Equals($coreActualSha512,[string]$coreAsset.hash,
+                         [StringComparison]::OrdinalIgnoreCase)) {
+    Remove-Item -LiteralPath $coreRuntimeZip -Force -ErrorAction SilentlyContinue
+    throw 'Microsoft Core Runtime ZIP SHA-512 mismatch; refusing build.'
+}
+Write-Host '[3/7] Merge verified Core + WindowsDesktop frameworks into ONE private Runtime...'
 if (Test-Path -LiteralPath $runtime) { Remove-Item -LiteralPath $runtime -Recurse -Force }
-[IO.Compression.ZipFile]::ExtractToDirectory($runtimeZip,$runtime)
+[IO.Compression.ZipFile]::ExtractToDirectory($coreRuntimeZip,$runtime)
+$desktopExtract = Join-Path $stage 'DesktopRuntime-Extract'
+if (Test-Path -LiteralPath $desktopExtract) { Remove-Item -LiteralPath $desktopExtract -Recurse -Force }
+[IO.Compression.ZipFile]::ExtractToDirectory($runtimeZip,$desktopExtract)
+$desktopFramework = Join-Path $desktopExtract "shared\Microsoft.WindowsDesktop.App\$RuntimeVersion"
+if (-not (Test-Path -LiteralPath $desktopFramework -PathType Container)) {
+    throw 'Official Microsoft Desktop Runtime ZIP lacks its Desktop framework.'
+}
+$desktopShared = Join-Path $runtime 'shared\Microsoft.WindowsDesktop.App'
+[IO.Directory]::CreateDirectory($desktopShared) | Out-Null
+Copy-Item -LiteralPath $desktopFramework -Destination $desktopShared -Recurse -Force
+$desktopNotices = Join-Path $runtime 'Licenses\WindowsDesktop'
+foreach ($notice in @('LICENSE.txt','ThirdPartyNotices.txt')) {
+    $sourceNotice = Join-Path $desktopExtract $notice
+    if (Test-Path -LiteralPath $sourceNotice -PathType Leaf) {
+        [IO.Directory]::CreateDirectory($desktopNotices) | Out-Null
+        Copy-Item -LiteralPath $sourceNotice -Destination (Join-Path $desktopNotices $notice) -Force
+    }
+}
+Remove-Item -LiteralPath $desktopExtract -Recurse -Force
 foreach ($file in @(
     'dotnet.exe',
     "host\fxr\$RuntimeVersion\hostfxr.dll",
@@ -198,6 +238,9 @@ $provenanceData = [ordered]@{
     runtimeRid = 'win-x64'
     runtimeUrl = $url.AbsoluteUri
     runtimeSha512 = $actualSha512
+    runtimeCoreUrl = $coreUrl.AbsoluteUri
+    runtimeCoreSha512 = $coreActualSha512
+    runtimeLayout = 'One private merged .NETCore + WindowsDesktop host'
     runtimeMetadataUrl = $metadataUrl
     runtimeExtractedBytes = [long]$runtimeBytes
     appHostSearch = 'AppRelative'

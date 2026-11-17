@@ -191,6 +191,10 @@ jobs:
           $p = Get-Content .\out\compact-dist\runtime-provenance.json -Raw | ConvertFrom-Json
           if ($r.sourceRevision -ne $env:GITHUB_SHA) { throw 'Source revision mismatch' }
           if ($p.runtimeVersion -ne '10.0.15') { throw 'Wrong runtime patch' }
+          if ($p.runtimeCoreUrl -notmatch '/dotnet/Runtime/10\.0\.15/dotnet-runtime-10\.0\.15-win-x64\.zip$') { throw 'Missing pinned Core Runtime URL' }
+          if ($p.runtimeCoreSha512 -notmatch '^[a-fA-F0-9]{128}$') { throw 'Missing Core Runtime SHA-512 provenance' }
+          if ($p.runtimeSha512 -notmatch '^[a-fA-F0-9]{128}$') { throw 'Missing Desktop Runtime SHA-512 provenance' }
+          if ($r.runtimeBytes -le 0) { throw 'Missing shared Runtime size' }
           if ($r.bytes -lt 1000000) { throw 'Implausible installer size' }
           Write-Host "Installer size: $($r.bytes) bytes"
           Write-Host "One shared runtime: $($r.runtimeBytes) bytes"

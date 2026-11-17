@@ -58,6 +58,21 @@ class CompactNativeInstallerContract(unittest.TestCase):
                           "New-NetFirewallRule", "Stop-Service", "Remove-Item $env:LOCALAPPDATA"):
             self.assertNotIn(forbidden, self.script)
 
+    def test_core_and_desktop_runtime_archives_make_one_private_runtime(self):
+        # The Desktop ZIP alone has no dotnet.exe: the official Core runtime
+        # must be verified independently and merged before the apphost smoke.
+        for token in (
+            "dotnet-runtime-win-x64.zip",
+            "windowsdesktop-runtime-win-x64.zip",
+            "$coreAssets = @($release[0].runtime.files",
+            "$coreActualSha512 = Sha512-File $coreRuntimeZip",
+            "Microsoft Core Runtime ZIP SHA-512 mismatch",
+            "ExtractToDirectory($coreRuntimeZip,$runtime)",
+            "Copy-Item -LiteralPath $desktopFramework -Destination $desktopShared",
+            "runtimeCoreSha512 = $coreActualSha512",
+        ):
+            self.assertIn(token, self.script)
+
     def test_net10_restore_has_isolated_assets_per_app(self):
         # The original three projects share one source folder and obj path.
         # .NET 9 test build must NEVER race/overwrite .NET 10 publish assets.
