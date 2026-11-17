@@ -153,6 +153,8 @@ class CompactNativeInstallerContract(unittest.TestCase):
         self.assertIn("TJRA-Compact-Install-Logs/", self.ci)
         self.assertIn("Audit real compact installer component and license paths", self.ci)
         self.assertIn("Uninstaller left shared runtime behind", self.ci)
+        self.assertIn("Required file missing:", self.ci)
+        self.assertIn("$rootCauses[-1]", self.ci)
         self.assertIn("if-no-files-found: error", self.ci)
         self.assertIn("compact-size-report.json", self.ci)
         self.assertIn("runtime-provenance.json", self.ci)

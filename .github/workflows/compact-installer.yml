@@ -83,12 +83,16 @@ jobs:
           Get-Content -LiteralPath $stderr -Tail 50 | ForEach-Object { Write-Host $_ }
           if ($p.ExitCode -ne 0) {
             $messages = @(Get-Content -LiteralPath $stderr) + @(Get-Content -LiteralPath $stdout)
-            $errors = @($messages | Select-String -Pattern 'error ([A-Z]{2,8}[0-9]{3,6}:.*)' | ForEach-Object { $_.Matches[0].Groups[1].Value })
-            $details = @($messages | Where-Object { $_ -match '(error|exception|failed|missing|invalid|not found|unsupported)' -and $_ -notmatch '(failed: exit=|^\s*at |^\s*\+|^\s*\~)' })
-            $reason = if ($errors.Count -gt 0) {
+            $clean = @($messages | ForEach-Object { [string]($_ -replace '\x1B\[[0-9;]*[mK]','') })
+            $errors = @($clean | Select-String -Pattern 'error ([A-Z]{2,8}[0-9]{3,6}:.*)' | ForEach-Object { $_.Matches[0].Groups[1].Value })
+            $rootCauses = @($clean | Where-Object { $_ -match '(Required file missing:|wrong .NET framework|failed: exit=|SHA-512 mismatch|Microsoft Runtime URL/hash|missing on build machine|Missing process arguments)' })
+            $details = @($clean | Where-Object { $_ -match '(error|exception|failed|missing|invalid|not found|unsupported)' -and $_ -notmatch '(failed: exit=|^\s*at |^\s*\+|^\s*\~)' })
+            $reason = if ($rootCauses.Count -gt 0) {
+              [string]$rootCauses[-1]
+            } elseif ($errors.Count -gt 0) {
               [string]$errors[0]
             } elseif ($details.Count -gt 0) {
-              [string]$details[0]
+              [string]$details[-1]
             } else {
               (@($messages | Where-Object { $_.Trim().Length -gt 0 } | Select-Object -Last 5) -join ' | ')
             }
