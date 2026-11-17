@@ -139,6 +139,10 @@ class CompactNativeInstallerContract(unittest.TestCase):
         # argument passing and keep the exact argv visible for diagnosis.
         self.assertIn("PSNativeCommandArgumentPassing = 'Standard'", self.script)
         self.assertIn('("[argv] " + $executable', self.script)
+        self.assertIn("[System.Diagnostics.ProcessStartInfo]::new($executable)", self.script)
+        self.assertIn("$startInfo.ArgumentList.Add([string]$argument)", self.script)
+        self.assertIn('"-p:BaseIntermediateOutputPath=$obj"', self.script)
+        self.assertIn('"-p:MSBuildProjectExtensionsPath=$obj"', self.script)
         self.assertIn("Start-Process -FilePath 'pwsh.exe'", self.ci)
         self.assertIn("shell: pwsh", self.ci)
         self.assertNotIn("Start-Process -FilePath 'powershell.exe'", self.ci)

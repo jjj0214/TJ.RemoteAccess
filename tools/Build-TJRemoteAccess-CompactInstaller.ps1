@@ -37,8 +37,27 @@ function Run-Checked([string]$label,[string]$executable,[string[]]$arguments) {
     }
     Write-Host "[run] $label"
     Write-Host ("[argv] " + $executable + " [" + ($arguments -join "] [") + "]")
-    & $executable @arguments
-    if ($LASTEXITCODE -ne 0) { throw "$label failed: exit=$LASTEXITCODE" }
+    # Preserve each command-line token exactly; avoid MSBuild MSB1008 on hosted runners.
+    if ($PSVersionTable.PSVersion.Major -ge 7) {
+        $startInfo = [System.Diagnostics.ProcessStartInfo]::new($executable)
+        $startInfo.UseShellExecute = $false
+        foreach ($argument in $arguments) {
+            if ([string]::IsNullOrWhiteSpace($argument)) { throw "Empty argument for $label" }
+            [void]$startInfo.ArgumentList.Add([string]$argument)
+        }
+        $process = [System.Diagnostics.Process]::Start($startInfo)
+        if ($null -eq $process) { throw "Cannot start $label" }
+        try {
+            $process.WaitForExit()
+            $exitCode = $process.ExitCode
+        } finally {
+            $process.Dispose()
+        }
+    } else {
+        & $executable @arguments
+        $exitCode = $LASTEXITCODE
+    }
+    if ($exitCode -ne 0) { throw "$label failed: exit=$exitCode" }
 }
 function Sha512-File([string]$path) {
     $stream = [IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
@@ -85,8 +104,8 @@ foreach ($app in @('Server','Viewer','Setup')) {
     [IO.Directory]::CreateDirectory($obj) | Out-Null
     $msbuild = @(
         '-p:TargetFramework=net10.0-windows',
-        '-p:BaseIntermediateOutputPath=' + $obj,
-        '-p:MSBuildProjectExtensionsPath=' + $obj,
+        "-p:BaseIntermediateOutputPath=$obj",
+        "-p:MSBuildProjectExtensionsPath=$obj",
         '-p:AppHostDotNetSearch=AppRelative',
         '-p:AppHostRelativeDotNet=../Runtime',
         "-p:Version=$Version",'-p:AssemblyVersion=0.5.4.0',
