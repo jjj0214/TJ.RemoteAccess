@@ -7,6 +7,7 @@ on:
     branches:
       - main
       - feature/chatgpt-product-ux-m3
+      - feature/chatgpt-m3-service-final
     paths:
       - 'src/**'
       - 'tests/**'
@@ -25,6 +26,8 @@ jobs:
     name: Admin-protected Service, Agent and installer smoke (isolated runner)
     runs-on: windows-latest
     timeout-minutes: 65
+    outputs:
+      install_error: ${{ steps.service_install_smoke.outputs.failure_reason }}
     steps:
       - name: Checkout exact GPL revision
         uses: actions/checkout@v4
@@ -69,14 +72,25 @@ jobs:
           } finally { $z.Dispose() }
 
       - name: Install and start Windows Service with both remote desktop opt-ins OFF
+        id: service_install_smoke
         shell: pwsh
         run: |
+          trap {
+            $reason = ([string]$_.Exception.Message -replace '[^A-Za-z0-9 .:_()/=\\-]',' ').Trim()
+            if ($reason.Length -gt 125) { $reason = $reason.Substring(0,125) }
+            if ($env:GITHUB_OUTPUT) { Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "failure_reason=$reason" }
+            throw
+          }
           $ErrorActionPreference = 'Stop'
           if (Get-Service -Name TJRA.ControlService -ErrorAction SilentlyContinue) {
             throw 'Runner is not isolated: TJRA.ControlService already exists'
           }
-          pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Install-TJRemoteAccess-ServicePreview.ps1 -PackagePath $env:TJRA_ZIP_PATH -ExpectedPackageSha256 $env:TJRA_ZIP_HASH -ApproveServicePreview -Start
-          if ($LASTEXITCODE -ne 0) { throw 'Service Preview install failed' }
+          $installLog = Join-Path $env:RUNNER_TEMP 'TJRA-service-preview-install.log'
+          pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Install-TJRemoteAccess-ServicePreview.ps1 -PackagePath $env:TJRA_ZIP_PATH -ExpectedPackageSha256 $env:TJRA_ZIP_HASH -ApproveServicePreview -Start 2>&1 | Tee-Object -FilePath $installLog
+          if ($LASTEXITCODE -ne 0) {
+            $last = @(Get-Content -LiteralPath $installLog -Tail 8) -join ' '
+            throw "Service Preview install failed: $last"
+          }
           $service = Get-CimInstance Win32_Service -Filter "Name='TJRA.ControlService'"
           if ($null -eq $service -or $service.StartName -ne 'LocalSystem' -or $service.State -ne 'Running') {
             throw 'SCM Service missing, not LocalSystem, or not Running'
@@ -101,8 +115,16 @@ jobs:
           foreach ($rule in $acl.Access) {
             if ($rule.AccessControlType -ne 'Allow' -or
                 $rule.IdentityReference.Value -notmatch '(^|\\)(Users|Authenticated Users|Everyone)$') { continue }
-            if (($rule.FileSystemRights -band [Security.AccessControl.FileSystemRights]::Modify) -ne 0) {
-              throw 'Unprivileged users can modify LocalSystem Service files'
+            $writeBits = [Security.AccessControl.FileSystemRights]::WriteData -bor
+                         [Security.AccessControl.FileSystemRights]::AppendData -bor
+                         [Security.AccessControl.FileSystemRights]::WriteAttributes -bor
+                         [Security.AccessControl.FileSystemRights]::WriteExtendedAttributes -bor
+                         [Security.AccessControl.FileSystemRights]::Delete -bor
+                         [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+                         [Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+                         [Security.AccessControl.FileSystemRights]::TakeOwnership
+            if (($rule.FileSystemRights -band $writeBits) -ne 0) {
+              throw 'Unprivileged users have write/delete rights to LocalSystem files'
             }
           }
           Write-Host 'M3 STATUS-ONLY SCM + isolated Program Files ACL PASS'
@@ -131,6 +153,26 @@ jobs:
           }
           Write-Host 'ServicePreview Windows SCM install/upgrade/remove PASS'
 
+      - name: Preserve failure diagnostics before isolated cleanup
+        if: failure()
+        shell: pwsh
+        run: |
+          $folder = Join-Path $env:RUNNER_TEMP 'TJRA-ServicePreview-Diagnostics'
+          New-Item -ItemType Directory -Path $folder -Force | Out-Null
+          $log = Join-Path $env:RUNNER_TEMP 'TJRA-service-preview-install.log'
+          if (Test-Path -LiteralPath $log) { Copy-Item -LiteralPath $log -Destination (Join-Path $folder 'installer.txt') }
+          & sc.exe queryex TJRA.ControlService 2>&1 | Out-File (Join-Path $folder 'service-query.txt')
+          Get-WinEvent -FilterHashtable @{ LogName='System'; ProviderName='Service Control Manager'; StartTime=(Get-Date).AddMinutes(-15) } -ErrorAction SilentlyContinue | Select-Object -First 20 TimeCreated,Id,Message | Format-List | Out-File (Join-Path $folder 'scm.txt')
+
+      - name: Upload Service failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TJRA-ServicePreview-Diagnostics
+          path: ${{ runner.temp }}/TJRA-ServicePreview-Diagnostics/
+          if-no-files-found: warn
+          retention-days: 3
+
       - name: Emergency cleanup confined to this ephemeral runner
         if: always()
         shell: pwsh
@@ -153,3 +195,12 @@ jobs:
             out/packages/TJ.RemoteAccess.ServicePreview-0.5.4-preview-win-x64.zip.sha256
           if-no-files-found: warn
           retention-days: 7
+
+  service-failure-diagnostic:
+    needs: service-preview-windows
+    if: ${{ always() && needs.service-preview-windows.result == 'failure' }}
+    name: "Service failure: ${{ needs.service-preview-windows.outputs.install_error }}"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Bounded Service failure reason
+        run: echo 'See Windows Service diagnostic artifact and job name'
