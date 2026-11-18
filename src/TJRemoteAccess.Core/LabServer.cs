@@ -119,7 +119,7 @@ internal sealed class LabServerForm : Form
     };
     private readonly Button _start = new() { Text = "Start (interactive session)" };
     private readonly Button _stopButton = new() { Text = "Stop", Enabled = false };
-    private readonly Button _clientsButton = new() { Text = "Access settings", AutoSize = true };
+    private readonly Button _clientsButton = new() { Text = "Access & transfers", AutoSize = true };
     private readonly object _guard = new();
     private readonly HashSet<Guid> _sessions = new();
     private Guid? _controller;
@@ -600,8 +600,10 @@ internal sealed class LabServerForm : Form
                 var hello = await LabWire.ReadAsync(tls, token, LabWire.MaxControlPacketBytes)
                                          .WaitAsync(TimeSpan.FromSeconds(5), token);
                 if (hello.Type != LabMessage.Hello ||
-                    hello.Payload.Length != 1 || hello.Payload[0] != LabWire.Version)
+                    hello.Payload.Length is not (1 or 2) || hello.Payload[0] != LabWire.Version ||
+                    (hello.Payload.Length == 2 && hello.Payload[1] != 1))
                     throw new InvalidDataException("Unsupported viewer protocol.");
+                bool requestedViewOnly = hello.Payload.Length == 2;
 
                 if (passwordMode)
                 {
@@ -615,6 +617,7 @@ internal sealed class LabServerForm : Form
                         throw new AuthenticationException("Client was revoked during admission.");
                     mayControl = admission.CanControl;
                 }
+                if (requestedViewOnly) mayControl = false;
                 lock (_guard)
                 {
                     if (!_running || token.IsCancellationRequested)
@@ -638,6 +641,19 @@ internal sealed class LabServerForm : Form
                     LabWire.Welcome(new LabWelcome(role, _desktop.Width, _desktop.Height,
                                                    _desktop.Left, _desktop.Top)), token);
 
+                // Only the active controller may request an on-device approved file transfer.
+                using var transfers = new LabServerTransferSession(this, tls, writeMutex,
+                    tcp.Client.RemoteEndPoint?.ToString() ?? "unknown",
+                    () => {
+                        bool allowed;
+                        lock (_guard)
+                            allowed = _running && _controller == session && _sessions.Contains(session);
+#if TJRA_STANDALONE_PREVIEW
+                        return allowed && TJ.RemoteAccess.M3.M3InteractiveDesktopGuard.IsNormalInteractiveDesktop();
+#else
+                        return allowed;
+#endif
+                    }, Log);
                 var capture = SendFrames(tls, writeMutex, frames, remoteCert, clientPin,
                                          passwordMode, passwordVerifier, role, token);
                 // If capture fails (locked desktop, lost display, encoder),
@@ -655,7 +671,7 @@ internal sealed class LabServerForm : Form
                     while (!token.IsCancellationRequested)
                     {
                         var packet = await LabWire.ReadAsync(
-                            tls, token, LabWire.MaxControlPacketBytes)
+                            tls, token, LabFileTransfer.MaxPacketBytes)
                             .WaitAsync(TimeSpan.FromSeconds(25), token);
                         if (passwordMode)
                         {
@@ -672,7 +688,13 @@ internal sealed class LabServerForm : Form
                         // turn a view-only session into a controller.
                         if (packet.Type == LabMessage.KeepAlive && packet.Payload.Length == 0)
                             continue;
-                        if (packet.Type is not (LabMessage.Key or LabMessage.Pointer))
+                        if (LabServerTransferSession.IsFileMessage(packet.Type))
+                        {
+                            await transfers.HandleAsync(packet, token);
+                            continue;
+                        }
+                        if (packet.Type is not (LabMessage.Key or LabMessage.Pointer or
+                            LabMessage.Wheel or LabMessage.CaptureOptions))
                             throw new InvalidDataException("Unexpected viewer packet.");
                         lock (_guard)
                         {
@@ -692,11 +714,18 @@ internal sealed class LabServerForm : Form
                                 var key = LabWire.ParseKey(packet.Payload);
                                 LabNativeInput.ApplyKey(_pressedKeys, key.Key, key.Pressed);
                             }
-                            else {
+                            else if (packet.Type == LabMessage.Pointer) {
                                 var pointer = LabWire.ParsePointer(packet.Payload);
                                 LabNativeInput.ApplyPointer(_desktop,
                                     pointer.X, pointer.Y, pointer.Buttons,
                                     ref _pressedMouse);
+                            }
+                            else if (packet.Type == LabMessage.Wheel) {
+                                LabNativeInput.ApplyWheel(LabWire.ParseWheel(packet.Payload));
+                            }
+                            else if (packet.Type == LabMessage.CaptureOptions) {
+                                var opts = LabWire.ParseCaptureSettings(packet.Payload);
+                                frames.Configure(opts.Quality, opts.Fps);
                             }
                         }
                     }
@@ -752,12 +781,12 @@ internal sealed class LabServerForm : Form
                     if (!TJ.RemoteAccess.M3.M3InteractiveDesktopGuard.IsNormalInteractiveDesktop())
                         throw new AuthenticationException("Desktop became locked or protected.");
 #endif
-                    var jpeg = CaptureJpeg(_desktop);
+                    var jpeg = CaptureJpeg(_desktop, frames.Quality);
                     if (!token.IsCancellationRequested)
                         frames.Publish(jpeg);
                 }
                 // Do not capture a private desktop when no one is connected.
-                await Task.Delay(hasViewer ? 160 : 350, token);
+                await Task.Delay(hasViewer ? 1000 / frames.FramesPerSecond : 350, token);
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
@@ -813,7 +842,7 @@ internal sealed class LabServerForm : Form
         }
     }
 
-    private static byte[] CaptureJpeg(Rectangle desktop)
+    private static byte[] CaptureJpeg(Rectangle desktop, int quality)
     {
         using var bitmap = new Bitmap(desktop.Width, desktop.Height,
                                       PixelFormat.Format24bppRgb);
@@ -831,7 +860,7 @@ internal sealed class LabServerForm : Form
         }
         using var memory = new MemoryStream();
         using var parameters = new EncoderParameters(1);
-        parameters.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 65L);
+        parameters.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, (long)quality);
         var jpeg = ImageCodecInfo.GetImageEncoders().First(e => e.MimeType == "image/jpeg");
         reduced.Save(memory, jpeg, parameters);
         return memory.ToArray();
@@ -876,6 +905,14 @@ internal static class LabNativeInput
         if ((buttons & 4) != (pressed & 4)) flags |= (buttons & 4) != 0 ? MIDDLEDOWN : MIDDLEUP;
         if (flags != 0) mouse_event(flags, 0, 0, 0, UIntPtr.Zero);
         pressed = buttons;
+    }
+
+    internal static void ApplyWheel(short delta)
+    {
+        // Called ONLY after TLS, Controller ACL and normal-desktop checks.
+        if (delta == 0 || delta is < -1200 or > 1200)
+            throw new InvalidDataException("Invalid wheel input.");
+        mouse_event(0x0800, 0, 0, unchecked((uint)(int)delta), UIntPtr.Zero);
     }
 
     internal static void ReleaseAll(HashSet<ushort> pressed, ref byte pressedMouse)

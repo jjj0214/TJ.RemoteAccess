@@ -27,8 +27,10 @@ class LabHardeningContracts(unittest.TestCase):
 
     def test_server_closes_idle_controller_and_caps_input_packets(self):
         server = (CORE / "LabServer.cs").read_text(encoding="utf-8")
-        self.assertGreaterEqual(
-            server.count("LabWire.MaxControlPacketBytes"), 2)
+        # Handshake/Hello uses the strict 32-byte limit; authenticated transfer
+        # frames use a separate, still bounded 48 KiB file-chunk ceiling.
+        self.assertGreaterEqual(server.count("LabWire.MaxControlPacketBytes"), 1)
+        self.assertIn("LabFileTransfer.MaxPacketBytes", server)
         self.assertIn(".WaitAsync(TimeSpan.FromSeconds(25), token)", server)
         self.assertIn(".WaitAsync(TimeSpan.FromSeconds(10), token)", server)
         self.assertIn("_sessions.Clear()", server)

@@ -61,6 +61,18 @@ for concrete implementation blockers. The static audit never approves deployment
   New compact CI requires .NET 10 SDK/Inno Setup 6; the existing local machine
   currently only has SDK 9.0.318, so it validates legacy paths separately.
   Instructions: docs/COMPACT_INSTALLER_0_5_4_20261116_KO.md.
+- **Current feature work (development branch, not yet two-PC accepted):**
+  authenticated Controller-only bidirectional file transfer over existing TLS,
+  with individual on-device Server consent, per-user 64 MiB file cap, 48 KiB
+  bounded chunks, path validation and SHA-256 before final rename. Viewer
+  has Send/Receive file, Connection Options (view-only role, JPEG 25–90,
+  FPS 2–20, certificate-only limited reconnect), scroll wheel, full-screen
+  and Fit/50–200% scaling. This is not a full TightVNC protocol replacement.
+  M3 ServicePreview is installed separately with administrator approval
+  under protected Program Files. Two opt-ins are required for a visible
+  signed-in user Server; Windows locked desktop, Winlogon and UAC remain blocked.
+  See docs/PRODUCT_UX_M3_FOLLOWUP_20261118_KO.md and the isolated Windows
+  service-preview-ci.yml gates. Do not enable this in production.
 - Standalone **0.5.3-preview graphical installer**:
   `TJ.RemoteAccess.Installer.exe` is self-contained for Windows x64,
   double-clickable (no PowerShell or .NET SDK needed on the target PC).

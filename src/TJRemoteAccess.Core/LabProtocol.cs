@@ -9,7 +9,10 @@ internal enum LabMessage : byte
 {
     Hello = 1, Welcome = 2, JpegFrame = 3, Key = 4,
     Pointer = 5, Status = 6, KeepAlive = 7,
-    PasswordLogin = 8
+    PasswordLogin = 8,
+    FileOffer = 10, FileDecision = 11, FileChunk = 12,
+    FileComplete = 13, FileResult = 14, FileRequest = 15,
+    CaptureOptions = 16, Wheel = 17
 }
 internal enum LabRole : byte { ViewOnly = 0, Controller = 1 }
 internal readonly record struct LabPacket(LabMessage Type, byte[] Payload);
@@ -139,6 +142,35 @@ internal static class LabWire
         if (key == 0 || key > 254)
             throw new InvalidDataException("Invalid virtual-key code.");
         return (key, bytes[2] == 1);
+    }
+
+    internal static byte[] CaptureSettings(byte jpegQuality, byte framesPerSecond)
+    {
+        if (jpegQuality is < 25 or > 90 || framesPerSecond is < 2 or > 20)
+            throw new InvalidDataException("Invalid capture quality or frame rate.");
+        return new[] { jpegQuality, framesPerSecond };
+    }
+    internal static (byte Quality, byte Fps) ParseCaptureSettings(ReadOnlySpan<byte> data)
+    {
+        if (data.Length != 2) throw new InvalidDataException("Invalid capture settings packet.");
+        CaptureSettings(data[0], data[1]);
+        return (data[0], data[1]);
+    }
+    internal static byte[] Wheel(short delta)
+    {
+        if (delta == 0 || delta is < -1200 or > 1200)
+            throw new InvalidDataException("Invalid wheel delta.");
+        var result = new byte[2];
+        BinaryPrimitives.WriteInt16BigEndian(result, delta);
+        return result;
+    }
+    internal static short ParseWheel(ReadOnlySpan<byte> data)
+    {
+        if (data.Length != 2) throw new InvalidDataException("Invalid wheel packet.");
+        short delta = BinaryPrimitives.ReadInt16BigEndian(data);
+        if (delta == 0 || delta is < -1200 or > 1200)
+            throw new InvalidDataException("Invalid wheel delta.");
+        return delta;
     }
 
     // Cursor position is normalized to 0..65535 across the entire virtual

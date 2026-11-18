@@ -11,6 +11,16 @@ internal sealed class LabSharedFrameStore
 {
     private LabSharedFrame? _latest;
     private long _sequence;
+    private int _quality = 65;
+    private int _framesPerSecond = 6;
+    internal int Quality => Volatile.Read(ref _quality);
+    internal int FramesPerSecond => Volatile.Read(ref _framesPerSecond);
+    internal void Configure(byte quality, byte framesPerSecond)
+    {
+        LabWire.CaptureSettings(quality, framesPerSecond);
+        Interlocked.Exchange(ref _quality, quality);
+        Interlocked.Exchange(ref _framesPerSecond, framesPerSecond);
+    }
 
     internal LabSharedFrame? Latest => Volatile.Read(ref _latest);
 

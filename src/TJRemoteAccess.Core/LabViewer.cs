@@ -64,6 +64,17 @@ internal sealed class LabViewerForm : Form
     private readonly Button _pauseDisplay = new() { Text = "Pause display", AutoSize = true };
     private readonly Button _snapshot = new() { Text = "Save snapshot", AutoSize = true };
     private readonly Button _sendTaskManager = new() { Text = "Send Ctrl+Shift+Esc", AutoSize = true };
+    private readonly Button _sendFile = new() { Text = "Send file...", AutoSize = true };
+    private readonly Button _receiveFile = new() { Text = "Receive file...", AutoSize = true };
+    private readonly LabViewerTransfers _transfers;
+    private readonly Button _connectionOptionsButton = new() { Text = "Connection options...", AutoSize = true };
+    private readonly Button _reconnect = new() { Text = "Reconnect", AutoSize = true };
+    private readonly Button _fullScreenButton = new() { Text = "Full screen", AutoSize = true };
+    private LabViewerConnectionOptions _options;
+    private readonly System.Windows.Forms.Timer _reconnectTimer = new() { Interval = 4000 };
+    private int _reconnectAttempts;
+    private bool _manualDisconnect;
+    private bool _fullScreen;
     private volatile bool _displayPaused;
     private readonly Label _status = new() {
         Dock = DockStyle.Bottom, Height = 28, TextAlign = ContentAlignment.MiddleLeft,
@@ -93,6 +104,8 @@ internal sealed class LabViewerForm : Form
     internal LabViewerForm(LabViewerProfileStore profileStore, LabViewerLaunchOptions? launch = null)
     {
         _profileStore = profileStore;
+        _options = LabViewerConnectionOptions.Load();
+        _transfers = new LabViewerTransfers(SendTransferAsync, SelectDownloadDestinationAsync, ShowStatus);
 #if TJRA_STANDALONE_PREVIEW
         Text = "TJ.RemoteAccess Viewer - PREVIEW";
 #else
@@ -131,12 +144,17 @@ internal sealed class LabViewerForm : Form
         toolbar.Controls.Add(_port);
         toolbar.Controls.Add(_connect);
         toolbar.Controls.Add(_disconnect);
+        toolbar.Controls.Add(_reconnect);
+        toolbar.Controls.Add(_connectionOptionsButton);
+        toolbar.Controls.Add(_fullScreenButton);
         _displayMode.Items.AddRange(new object[] { "Fit", "50%", "75%", "100%", "125%", "150%", "200%" });
         _displayMode.SelectedIndex = 0;
         toolbar.Controls.Add(_displayMode);
         toolbar.Controls.Add(_pauseDisplay);
         toolbar.Controls.Add(_snapshot);
         toolbar.Controls.Add(_sendTaskManager);
+        toolbar.Controls.Add(_sendFile);
+        toolbar.Controls.Add(_receiveFile);
         _canvasHost.Controls.Add(_picture);
         Controls.Add(_canvasHost);
         Controls.Add(_status);
@@ -152,27 +170,51 @@ internal sealed class LabViewerForm : Form
                 LabViewerProfileDialogs.ShowIdentity(this, profile);
         };
         _refreshProfile.Click += (_, _) => ReloadProfiles();
-        _disconnect.Click += (_, _) => Disconnect();
+        _disconnect.Click += (_, _) => { _manualDisconnect = true; Disconnect(); };
+        _reconnect.Click += async (_, _) => {
+            _manualDisconnect = true;
+            Disconnect();
+            _manualDisconnect = false;
+            await ConnectAsync();
+        };
+        _connectionOptionsButton.Click += async (_, _) => await ConfigureConnectionOptionsAsync();
+        _fullScreenButton.Click += (_, _) => SetFullScreen(!_fullScreen);
         _displayMode.SelectedIndexChanged += (_, _) => ApplyDisplayScale();
         _pauseDisplay.Click += async (_, _) => await ToggleDisplayPauseAsync();
         _snapshot.Click += (_, _) => SaveSnapshot(); // Save a local copy of the current frame.
         _sendTaskManager.Click += async (_, _) => await SendTaskManagerShortcutAsync();
+        _sendFile.Click += async (_, _) => await SendSelectedFileAsync();
+        _receiveFile.Click += async (_, _) => await RequestFileAsync();
         _picture.MouseDown += async (_, e) => {
             _picture.Focus();
             await SendPointerAsync(e.Location, force: true);
         };
         _picture.MouseMove += async (_, e) => await SendPointerAsync(e.Location);
         _picture.MouseUp += async (_, e) => await SendPointerAsync(e.Location, force: true);
-        _picture.MouseWheel += (_, _) => { }; // Wheel requires a server-side input sink.
-        KeyDown += async (_, e) => await OnRemoteKey(e, pressed: true);
+        _picture.MouseWheel += async (_, e) => {
+            if (CanControl && e.Delta != 0)
+                await SendAsync(LabMessage.Wheel, LabWire.Wheel((short)Math.Clamp(e.Delta, -1200, 1200)));
+        };
+        KeyDown += async (_, e) => {
+            if (_fullScreen && e.KeyCode == Keys.Escape)
+            {
+                e.SuppressKeyPress = true; SetFullScreen(false); return;
+            }
+            await OnRemoteKey(e, pressed: true);
+        };
         KeyUp += async (_, e) => await OnRemoteKey(e, pressed: false);
         Deactivate += async (_, _) => await ReleaseHeldKeysAsync();
-        FormClosing += (_, _) => Disconnect();
+        FormClosing += (_, _) => { _manualDisconnect = true; Disconnect(); };
         _keepAlive.Tick += async (_, _) => {
             if (_connected)
                 await SendAsync(LabMessage.KeepAlive, ReadOnlyMemory<byte>.Empty);
         };
         _keepAlive.Start();
+        _reconnectTimer.Tick += async (_, _) => {
+            _reconnectTimer.Stop();
+            if (!_connected && !_connecting && SelectedProfile is not null)
+                await ConnectAsync();
+        };
         ReloadProfiles(launch?.ProfileId);
         if (launch is { Connect: true })
         {
@@ -187,7 +229,46 @@ internal sealed class LabViewerForm : Form
 #endif
     }
 
-    private bool CanControl => _connected && !_displayPaused && _role == LabRole.Controller;
+    private bool CanControl => _connected && !_displayPaused && !_options.ViewOnly && _role == LabRole.Controller;
+
+    private async Task ConfigureConnectionOptionsAsync()
+    {
+        var next = LabViewerConnectionOptionsDialog.Prompt(this, _options);
+        if (next is null) return;
+        var previous = _options;
+        try { next.Save(); _options = next; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or
+            InvalidDataException or OverflowException)
+        { ShowStatus("Unable to save Connection Options: " + ex.Message); return; }
+        if (_connected && next.FullScreen != previous.FullScreen)
+            SetFullScreen(next.FullScreen);
+        if (_connected && _role == LabRole.Controller && !next.ViewOnly &&
+            (next.JpegQuality != previous.JpegQuality || next.FramesPerSecond != previous.FramesPerSecond))
+            await SendAsync(LabMessage.CaptureOptions,
+                LabWire.CaptureSettings((byte)next.JpegQuality, (byte)next.FramesPerSecond));
+        UpdateProfileControls();
+        ShowStatus(_connected && next.ViewOnly != previous.ViewOnly
+            ? "View-only preference changed. Reconnect to negotiate the Server role."
+            : "Connection Options saved (no passwords stored).");
+    }
+
+    private void SetFullScreen(bool enabled)
+    {
+        if (_fullScreen == enabled) return;
+        _fullScreen = enabled;
+        if (enabled)
+        {
+            WindowState = FormWindowState.Normal;
+            FormBorderStyle = FormBorderStyle.None;
+            WindowState = FormWindowState.Maximized;
+        }
+        else
+        {
+            FormBorderStyle = FormBorderStyle.Sizable;
+            WindowState = FormWindowState.Normal;
+        }
+        _fullScreenButton.Text = enabled ? "Exit full screen (Esc)" : "Full screen";
+    }
 
     private void ApplyDisplayScale()
     {
@@ -215,7 +296,58 @@ internal sealed class LabViewerForm : Form
         if (!_displayPaused) await ReleaseHeldKeysAsync();
         _displayPaused = !_displayPaused;
         _pauseDisplay.Text = _displayPaused ? "Resume display" : "Pause display";
+        UpdateProfileControls();
         _status.Text = _displayPaused ? "Display paused locally; session stays active." : "Display resumed.";
+    }
+
+    private async Task SendSelectedFileAsync()
+    {
+        if (!CanControl || _stop is null) return;
+        using var pick = new OpenFileDialog {
+            Title = "Choose file to send to Server (64 MiB maximum)",
+            Filter = "All files (*.*)|*.*", CheckFileExists = true, Multiselect = false
+        };
+        if (pick.ShowDialog(this) != DialogResult.OK) return;
+        try { await _transfers.UploadAsync(pick.FileName, _stop.Token); }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or
+            UnauthorizedAccessException or OperationCanceledException or TimeoutException or
+            InvalidOperationException or System.Security.Cryptography.CryptographicException)
+        { ShowStatus("Send file failed: " + ex.Message); }
+    }
+
+    private async Task RequestFileAsync()
+    {
+        if (!CanControl || _stop is null) return;
+        try { await _transfers.DownloadAsync(_stop.Token); }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or
+            UnauthorizedAccessException or OperationCanceledException or TimeoutException or
+            InvalidOperationException)
+        { ShowStatus("Receive file failed: " + ex.Message); }
+    }
+
+    private async Task<string?> SelectDownloadDestinationAsync(LabFileOffer offer, CancellationToken stop)
+    {
+        if (IsDisposed || !IsHandleCreated) return null;
+        var completion = new TaskCompletionSource<string?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            BeginInvoke(new Action(() =>
+            {
+                if (IsDisposed || !CanControl) { completion.TrySetResult(null); return; }
+                using var save = new SaveFileDialog {
+                    Title = "Save file offered by Server (64 MiB maximum)",
+                    FileName = offer.FileName, Filter = "All files (*.*)|*.*",
+                    AddExtension = false, OverwritePrompt = true
+                };
+                completion.TrySetResult(save.ShowDialog(this) == DialogResult.OK
+                    ? save.FileName : null);
+            }));
+            return await completion.Task.WaitAsync(TimeSpan.FromMinutes(2), stop);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException or
+            OperationCanceledException or TimeoutException)
+        { return null; }
     }
 
     private void SaveSnapshot()
@@ -331,6 +463,9 @@ private LabViewerProfile? SelectedProfile =>
         _port.Enabled = !busy && SelectedProfile is not null;
         _connect.Enabled = !busy && SelectedProfile is not null;
         _disconnect.Enabled = busy;
+        _reconnect.Enabled = !_connecting && SelectedProfile is not null;
+        _sendFile.Enabled = CanControl;
+        _receiveFile.Enabled = CanControl;
     }
 
     private void AddServerProfile()
@@ -500,7 +635,9 @@ private LabViewerProfile? SelectedProfile =>
                 finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(secret); }
             }
             await LabWire.WriteAsync(_tls, _outgoingMutex,
-                                     LabMessage.Hello, new[] { LabWire.Version }, token);
+                                     LabMessage.Hello,
+                                     _options.ViewOnly ? new byte[] { LabWire.Version, 1 } :
+                                     new byte[] { LabWire.Version }, token);
             var welcome = await LabWire.ReadAsync(_tls, token)
                                        .WaitAsync(TimeSpan.FromSeconds(8), token);
             if (welcome.Type != LabMessage.Welcome)
@@ -517,7 +654,14 @@ private LabViewerProfile? SelectedProfile =>
             _desktopWidth = metadata.Width;
             _desktopHeight = metadata.Height;
             _role = metadata.Role;
+            if (_role == LabRole.Controller)
+                await LabWire.WriteAsync(_tls, _outgoingMutex, LabMessage.CaptureOptions,
+                    LabWire.CaptureSettings((byte)_options.JpegQuality, (byte)_options.FramesPerSecond), token);
             _connected = true;
+            _manualDisconnect = false;
+            _reconnectAttempts = 0;
+            _reconnectTimer.Stop();
+            if (_options.FullScreen) SetFullScreen(true);
             _status.Text = $"Connected to {profile.Name} ({_role}), desktop {_desktopWidth}x{_desktopHeight}. " +
                            "Secure desktop/UAC not supported.";
             // JPEG decode runs off UI thread; only final bitmap swap uses UI.
@@ -528,6 +672,12 @@ private LabViewerProfile? SelectedProfile =>
         {
             Disconnect();
             _status.Text = "Connection failed: " + ex.Message;
+            if (_reconnectAttempts > 0 && _reconnectAttempts < 3 &&
+                _options.MayAutoReconnect(SelectedProfile?.AuthMode == "Certificate", _manualDisconnect))
+            {
+                _reconnectAttempts++;
+                _reconnectTimer.Start();
+            }
         }
         finally {
             _connecting = false;
@@ -544,6 +694,12 @@ private LabViewerProfile? SelectedProfile =>
                 using var frameDeadline = CancellationTokenSource.CreateLinkedTokenSource(token);
                 frameDeadline.CancelAfter(TimeSpan.FromSeconds(25));
                 var packet = await LabWire.ReadAsync(stream, frameDeadline.Token);
+                // File packets share the authenticated TLS stream, not the JPEG decoder.
+                if (LabViewerTransfers.IsFileMessage(packet.Type))
+                {
+                    await _transfers.HandleAsync(packet, token);
+                    continue;
+                }
                 if (packet.Type != LabMessage.JpegFrame)
                     throw new InvalidDataException("Unexpected server packet.");
                 // Local freeze keeps reading authenticated frames to avoid
@@ -623,7 +779,19 @@ private LabViewerProfile? SelectedProfile =>
                 try {
                     BeginInvoke(new Action(() => {
                         // An old reader must never close a newly connected session.
-                        if (ReferenceEquals(_tls, stream)) Disconnect();
+                        if (ReferenceEquals(_tls, stream))
+                        {
+                            bool retry = _options.MayAutoReconnect(
+                                SelectedProfile?.AuthMode == "Certificate", _manualDisconnect);
+                            Disconnect();
+                            if (retry && _reconnectAttempts < 3)
+                            {
+                                _reconnectAttempts++;
+                                _reconnectTimer.Start();
+                                _status.Text = "Connection lost; certificate reconnect attempt " +
+                                    _reconnectAttempts + "/3 scheduled.";
+                            }
+                        }
                     }));
                 }
                 catch (InvalidOperationException) { }
@@ -639,6 +807,17 @@ private LabViewerProfile? SelectedProfile =>
             return;
         }
         _status.Text = text;
+    }
+
+    private async Task SendTransferAsync(LabMessage type, ReadOnlyMemory<byte> payload)
+    {
+        // Transfer commands must propagate socket failure to the caller;
+        // best-effort pointer/keyboard SendAsync intentionally remains separate.
+        var stream = _tls ?? throw new IOException("Transfer connection is closed.");
+        var token = _stop?.Token ?? throw new IOException("Transfer session has ended.");
+        if (!_connected || token.IsCancellationRequested)
+            throw new IOException("Transfer connection is not active.");
+        await LabWire.WriteAsync(stream, _outgoingMutex, type, payload, token);
     }
 
     private async Task SendAsync(LabMessage type, ReadOnlyMemory<byte> payload)
@@ -724,6 +903,8 @@ private LabViewerProfile? SelectedProfile =>
     private void Disconnect()
     {
         _connected = false;
+        _reconnectTimer.Stop();
+        _transfers.Disconnect();
         _stop?.Cancel();
         _tcp?.Dispose();
         _tls?.Dispose();
@@ -751,6 +932,8 @@ private LabViewerProfile? SelectedProfile =>
         if (disposing) {
             _picture.Image?.Dispose();
             _keepAlive.Dispose();
+            _reconnectTimer.Dispose();
+            _transfers.Dispose();
             _outgoingMutex.Dispose();
         }
         base.Dispose(disposing);

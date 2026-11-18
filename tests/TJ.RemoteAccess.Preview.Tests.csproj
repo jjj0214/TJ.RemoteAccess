@@ -19,6 +19,9 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="preview_isolation_tests.cs" />
+    <Compile Include="preview_connection_options_tests.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\LabConnectionOptions.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\LabSharedFrames.cs" />
     <Compile Include="preview_tray_tests.cs" />
     <Compile Include="preview_quick_password_tests.cs" />
     <Compile Include="preview_installer_tests.cs" />
@@ -27,6 +30,7 @@
     <Compile Include="..\src\TJRemoteAccess.Core\PreviewInstallerCore.cs" />
     <Compile Include="..\\src\\TJRemoteAccess.Core\\LabViewerProfiles.cs" />
     <Compile Include="..\\src\\TJRemoteAccess.Core\\LabProtocol.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\LabFileTransfer.cs" />
     <Compile Include="..\\src\\TJRemoteAccess.Core\\LabQuickPasswordTrust.cs" />
     <Compile Include="..\\src\\TJRemoteAccess.Core\\LabPasswordAccess.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\LabServerTray.cs" />

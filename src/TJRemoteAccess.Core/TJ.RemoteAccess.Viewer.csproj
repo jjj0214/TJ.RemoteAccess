@@ -16,6 +16,9 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="LabProtocol.cs" />
+    <Compile Include="LabFileTransfer.cs" />
+    <Compile Include="LabViewerTransfers.cs" />
+    <Compile Include="LabConnectionOptions.cs" />
     <Compile Include="LabCertificates.cs" />
     <Compile Include="LabViewerProfiles.cs" />
     <Compile Include="LabViewerLaunch.cs" />

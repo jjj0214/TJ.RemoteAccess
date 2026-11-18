@@ -32,7 +32,7 @@ class PreviewProductUXContracts(unittest.TestCase):
         server = (CORE / "LabServer.cs").read_text(encoding="utf-8-sig")
         tray = (CORE / "LabServerTray.cs").read_text(encoding="utf-8-sig")
         access = (CORE / "LabServerClientAccessForm.cs").read_text(encoding="utf-8-sig")
-        self.assertIn('Text = "Access settings"', server)
+        self.assertIn('Text = "Access & transfers"', server)
         self.assertIn('"Access settings..."', tray)
         self.assertIn("ShowPasswordAccess", server)
         self.assertIn('"Password / quick access..."', access)

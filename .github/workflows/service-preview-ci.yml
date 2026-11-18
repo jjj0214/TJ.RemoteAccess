@@ -1,0 +1,155 @@
+# Runs only on an ephemeral GitHub-hosted Windows VM.
+# Separate from per-user Compact installer: LocalSystem binaries live in Program Files.
+name: TJ.RemoteAccess Service Preview Windows CI
+
+on:
+  push:
+    branches:
+      - main
+      - feature/chatgpt-product-ux-m3
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/Build-TJRemoteAccess-ServicePreviewPackage.ps1'
+      - 'tools/Install-TJRemoteAccess-ServicePreview.ps1'
+      - 'tools/Uninstall-TJRemoteAccess-ServicePreview.ps1'
+      - 'tools/Test-TJRemoteAccess-ServicePreview.ps1'
+      - '.github/workflows/service-preview-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  service-preview-windows:
+    name: Admin-protected Service, Agent and installer smoke (isolated runner)
+    runs-on: windows-latest
+    timeout-minutes: 65
+    steps:
+      - name: Checkout exact GPL revision
+        uses: actions/checkout@v4
+
+      - name: Install .NET SDK 9 for self-contained Service package
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Release build and Agent IPC regression
+        shell: pwsh
+        run: |
+          dotnet build .\TJ.RemoteAccess.sln -c Release --nologo
+          if ($LASTEXITCODE -ne 0) { throw 'M3 Release build failed' }
+          dotnet test .\tests\TJ.RemoteAccess.Lab.Tests.csproj -c Release --nologo --filter 'Category!=InteractiveWindowsDesktop'
+          if ($LASTEXITCODE -ne 0) { throw 'M3 security tests failed' }
+
+      - name: Build corresponding-source Service Preview ZIP
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-TJRemoteAccess-ServicePreviewPackage.ps1 -Version '0.5.4-preview'
+          if ($LASTEXITCODE -ne 0) { throw 'M3 ZIP build failed' }
+
+      - name: Verify exact archive SHA-256, source and manifest before installer
+        shell: pwsh
+        run: |
+          $zip = '.\out\packages\TJ.RemoteAccess.ServicePreview-0.5.4-preview-win-x64.zip'
+          $line = (Get-Content "$zip.sha256" -Raw).Trim()
+          if ($line -notmatch '^([A-Fa-f0-9]{64})  TJ\.RemoteAccess\.ServicePreview-0\.5\.4-preview-win-x64\.zip$') {
+            throw 'No external-looking package SHA-256 report'
+          }
+          $expected = $Matches[1]
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash -ine $expected) { throw 'ZIP SHA-256 mismatch' }
+          Add-Content $env:GITHUB_ENV "TJRA_ZIP_HASH=$expected"
+          Add-Content $env:GITHUB_ENV "TJRA_ZIP_PATH=$zip"
+          Add-Type -AssemblyName System.IO.Compression
+          $z = [IO.Compression.ZipFile]::OpenRead((Resolve-Path $zip).Path)
+          try {
+            foreach ($file in @('manifest.json','source.zip','LICENSE','TJ.RemoteAccess.M3.ControlService.exe','TJ.RemoteAccess.M3.Agent.exe','TJ.RemoteAccess.Server.exe')) {
+              if (-not ($z.Entries | Where-Object FullName -eq $file)) { throw "M3 ZIP missing $file" }
+            }
+          } finally { $z.Dispose() }
+
+      - name: Install and start Windows Service with both remote desktop opt-ins OFF
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Get-Service -Name TJRA.ControlService -ErrorAction SilentlyContinue) {
+            throw 'Runner is not isolated: TJRA.ControlService already exists'
+          }
+          pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Install-TJRemoteAccess-ServicePreview.ps1 -PackagePath $env:TJRA_ZIP_PATH -ExpectedPackageSha256 $env:TJRA_ZIP_HASH -ApproveServicePreview -Start
+          if ($LASTEXITCODE -ne 0) { throw 'Service Preview install failed' }
+          $service = Get-CimInstance Win32_Service -Filter "Name='TJRA.ControlService'"
+          if ($null -eq $service -or $service.StartName -ne 'LocalSystem' -or $service.State -ne 'Running') {
+            throw 'SCM Service missing, not LocalSystem, or not Running'
+          }
+          $dir = Join-Path $env:ProgramFiles 'TJ.RemoteAccess\ServicePreview'
+          if (-not ([IO.Path]::GetFullPath($service.PathName.Trim('"')).StartsWith(
+            [IO.Path]::GetFullPath($dir + '\'),[StringComparison]::OrdinalIgnoreCase))) {
+            throw 'Service image not under protected Program Files directory'
+          }
+          if (Test-Path (Join-Path $dir 'desktop-host-policy.json')) {
+            throw 'Operator desktop opt-in unexpectedly enabled'
+          }
+          $status = .\tools\Test-TJRemoteAccess-ServicePreview.ps1 | ConvertFrom-Json
+          if ($status.ServiceState -ne 'Running' -or $status.LocalSystemIdentity -ne $true -or
+              $status.OperatorDesktopPolicy -ne 'Disabled' -or $status.RemoteAccessEnabled -ne $false) {
+            throw 'Service status-only safety probe failed'
+          }
+          if (@($status.Tcp15544Listeners).Count -gt 0) {
+            throw 'Service unexpectedly exposed remote desktop listener without opt-ins'
+          }
+          $acl = Get-Acl $dir
+          foreach ($rule in $acl.Access) {
+            if ($rule.AccessControlType -ne 'Allow' -or
+                $rule.IdentityReference.Value -notmatch '(^|\\)(Users|Authenticated Users|Everyone)$') { continue }
+            if (($rule.FileSystemRights -band [Security.AccessControl.FileSystemRights]::Modify) -ne 0) {
+              throw 'Unprivileged users can modify LocalSystem Service files'
+            }
+          }
+          Write-Host 'M3 STATUS-ONLY SCM + isolated Program Files ACL PASS'
+
+      - name: Same-revision Service upgrade and protected owner checks
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Install-TJRemoteAccess-ServicePreview.ps1 -PackagePath $env:TJRA_ZIP_PATH -ExpectedPackageSha256 $env:TJRA_ZIP_HASH -ApproveServicePreview -Upgrade -Start
+          if ($LASTEXITCODE -ne 0) { throw 'Service Preview upgrade failed' }
+          $status = .\tools\Test-TJRemoteAccess-ServicePreview.ps1 | ConvertFrom-Json
+          if ($status.ServiceState -ne 'Running' -or $status.OperatorDesktopPolicy -ne 'Disabled') {
+            throw 'Service upgrade changed Service status or consent defaults'
+          }
+
+      - name: Remove only TJRA service and verify pristine non-TJRA resources
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Uninstall-TJRemoteAccess-ServicePreview.ps1 -ApproveServicePreviewRemoval
+          if ($LASTEXITCODE -ne 0) { throw 'Service Preview uninstall failed' }
+          Start-Sleep -Seconds 2
+          if (Get-Service -Name TJRA.ControlService -ErrorAction SilentlyContinue) {
+            throw 'TJRA Service still registered'
+          }
+          if (Test-Path (Join-Path $env:ProgramFiles 'TJ.RemoteAccess\ServicePreview')) {
+            throw 'Service Preview directory remains'
+          }
+          Write-Host 'ServicePreview Windows SCM install/upgrade/remove PASS'
+
+      - name: Emergency cleanup confined to this ephemeral runner
+        if: always()
+        shell: pwsh
+        run: |
+          $owned = Join-Path $env:ProgramFiles 'TJ.RemoteAccess\ServicePreview\manifest.json'
+          if (Test-Path $owned) {
+            $m = Get-Content -LiteralPath $owned -Raw | ConvertFrom-Json
+            if ($m.Artifact -eq 'TJ.RemoteAccess.Service.Preview') {
+              pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Uninstall-TJRemoteAccess-ServicePreview.ps1 -ApproveServicePreviewRemoval
+            }
+          }
+
+      - name: Publish unsigned isolated Windows Service Preview package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TJRA-0.5.4-ServicePreview-isolated
+          path: |
+            out/packages/TJ.RemoteAccess.ServicePreview-0.5.4-preview-win-x64.zip
+            out/packages/TJ.RemoteAccess.ServicePreview-0.5.4-preview-win-x64.zip.sha256
+          if-no-files-found: warn
+          retention-days: 7

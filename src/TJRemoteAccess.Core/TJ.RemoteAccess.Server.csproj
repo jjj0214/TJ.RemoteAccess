@@ -16,6 +16,9 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="LabProtocol.cs" />
+    <Compile Include="LabFileTransfer.cs" />
+    <Compile Include="LabTransferConsent.cs" />
+    <Compile Include="LabServerTransferSession.cs" />
     <Compile Include="LabCertificates.cs" />
     <Compile Include="LabServer.cs" />
     <Compile Include="LabServerTray.cs" />
