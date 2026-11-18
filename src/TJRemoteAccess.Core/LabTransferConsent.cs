@@ -23,7 +23,9 @@ internal static class LabTransferConsent
                         "Server approval is required for every transfer.\n\n" +
                         "Viewer: " + peerDescription + "\n" +
                         "File: " + offer.FileName + "\nSize: " + offer.Length.ToString("N0") +
-                        " bytes\nDestination: current-user TJ.RemoteAccess\\Received\n\nApprove?",
+                        " bytes\nDestination: current-user TJ.RemoteAccess\\Received" +
+                        (offer.TargetFolder.Length == 0 ? "" : "/" + offer.TargetFolder) +
+                        "\n\nApprove?",
                         "TJ.RemoteAccess - Incoming file",
                         MessageBoxButtons.YesNo, MessageBoxIcon.Question,
                         MessageBoxDefaultButton.Button2);

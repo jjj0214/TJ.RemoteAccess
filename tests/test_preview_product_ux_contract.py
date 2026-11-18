@@ -10,7 +10,7 @@ class PreviewProductUXContracts(unittest.TestCase):
     def test_viewer_scale_freeze_snapshot_and_safe_remote_shortcut(self):
         source = (CORE / "LabViewer.cs").read_text(encoding="utf-8-sig")
         for requirement in (
-            'new object[] { "Fit", "50%", "75%", "100%", "125%", "150%", "200%" }',
+            'new object[] { "Fit", "10%", "15%", "25%", "50%", "75%", "90%", "100%", "125%", "150%", "200%", "400%" }',
             "_canvasHost.AutoScroll = true",
             "_canvasHost.Controls.Add(_picture)",
             "_picture.SizeMode = PictureBoxSizeMode.Zoom",

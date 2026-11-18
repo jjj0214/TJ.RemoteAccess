@@ -24,7 +24,7 @@ class PreviewFeatureSecurityContracts(unittest.TestCase):
 
     def test_file_protocol_has_bounded_chunks_paths_and_integrity(self):
         source = (SRC / 'LabFileTransfer.cs').read_text(encoding='utf-8-sig')
-        for key in ('64L * 1024 * 1024', '48 * 1024', 'SafeFileName',
+        for key in ('4L * 1024 * 1024 * 1024', '48 * 1024', 'SafeFileName',
                     'Path.GetInvalidFileNameChars', 'FileAttributes.ReparsePoint',
                     'SHA256.HashDataAsync', 'CryptographicOperations.FixedTimeEquals',
                     'FileMode.CreateNew', 'File.Move(_partial, _target, overwrite: false)',

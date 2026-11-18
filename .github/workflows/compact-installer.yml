@@ -9,6 +9,7 @@ on:
       - feature/chatgpt-m2-engine-foundation
       - feature/chatgpt-compact-native-verify
       - feature/chatgpt-product-ux-m3
+      - feature/chatgpt-tightvnc-parity
     paths:
       - 'src/**'
       - 'tests/**'

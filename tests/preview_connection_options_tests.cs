@@ -16,6 +16,23 @@ public sealed class PreviewConnectionOptionsTests
     }
 
     [Theory]
+    [InlineData(0, 0)]
+    [InlineData(1, 2)]
+    [InlineData(2, 1)]
+    [InlineData(3, 3)]
+    [InlineData(4, 4)]
+    [InlineData(5, 6)]
+    [InlineData(6, 5)]
+    [InlineData(7, 7)]
+    public void PrimaryMouseSwapPreservesMiddleButton(int input, int expected)
+    {
+        var options = new LabViewerConnectionOptions(SwapMouseButtons: true);
+        Assert.Equal((byte)expected, options.MapMouseButtons((byte)input));
+        Assert.Equal((byte)input, new LabViewerConnectionOptions().MapMouseButtons((byte)input));
+        Assert.Throws<InvalidDataException>(() => options.MapMouseButtons(8));
+    }
+
+    [Theory]
     [InlineData(24, 6)]
     [InlineData(91, 6)]
     [InlineData(65, 1)]

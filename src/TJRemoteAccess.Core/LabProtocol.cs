@@ -12,7 +12,9 @@ internal enum LabMessage : byte
     PasswordLogin = 8,
     FileOffer = 10, FileDecision = 11, FileChunk = 12,
     FileComplete = 13, FileResult = 14, FileRequest = 15,
-    CaptureOptions = 16, Wheel = 17
+    CaptureOptions = 16, Wheel = 17, RefreshFrame = 18,
+    ClipboardSet = 19, ClipboardGet = 20, ClipboardText = 21, ClipboardDecision = 22,
+    FileManagerRequest = 23, FileManagerReply = 24
 }
 internal enum LabRole : byte { ViewOnly = 0, Controller = 1 }
 internal readonly record struct LabPacket(LabMessage Type, byte[] Payload);
@@ -171,6 +173,13 @@ internal static class LabWire
         if (delta == 0 || delta is < -1200 or > 1200)
             throw new InvalidDataException("Invalid wheel delta.");
         return delta;
+    }
+
+    // A full-screen refresh uses the authenticated session and has no payload.
+    // View-only clients may request a new frame, but never gain input rights.
+    internal static void ValidateRefreshFrame(ReadOnlySpan<byte> data)
+    {
+        if (!data.IsEmpty) throw new InvalidDataException("Invalid refresh request.");
     }
 
     // Cursor position is normalized to 0..65535 across the entire virtual

@@ -13,13 +13,17 @@ internal sealed class LabServerTransferSession : IDisposable
     private readonly string _peer;
     private readonly Func<bool> _authorized;
     private readonly Action<string> _status;
+    private readonly Action<Exception> _abortSession;
+    private Task? _outgoingDownload;
     private LabFileReceiver? _receive;
     private LabFileOffer? _sendOffer;
     private string? _sendPath;
     private bool _awaitingResult;
+    private LabServerRemoteFiles? _browser;
 
     internal LabServerTransferSession(Form owner, SslStream tls, SemaphoreSlim writer,
-        string peer, Func<bool> authorized, Action<string> status)
+        string peer, Func<bool> authorized, Action<string> status,
+        Action<Exception> abortSession)
     {
         _owner = owner;
         _tls = tls;
@@ -27,7 +31,10 @@ internal sealed class LabServerTransferSession : IDisposable
         _peer = peer;
         _authorized = authorized;
         _status = status;
+        _abortSession = abortSession;
     }
+
+    internal void SetRemoteFiles(LabServerRemoteFiles browser) => _browser = browser;
 
     internal static bool IsFileMessage(LabMessage type) => type is
         LabMessage.FileOffer or LabMessage.FileDecision or LabMessage.FileChunk or
@@ -94,9 +101,28 @@ internal sealed class LabServerTransferSession : IDisposable
             {
                 if (_receive is not null || _sendOffer is not null)
                     throw new InvalidDataException("Another transfer is active.");
-                Guid id = LabFileTransfer.ParseTransferId(packet.Payload);
-                string? path = await LabTransferConsent.SelectServerFileAsync(_owner, _peer, stop)
-                    .ConfigureAwait(false);
+                var request = LabRemoteFileWire.ParseDownloadRequest(packet.Payload);
+                Guid id = request.Id;
+                string? path = null;
+                if (request.RelativeFile.Length == 0)
+                {
+                    path = await LabTransferConsent.SelectServerFileAsync(_owner, _peer, stop)
+                        .ConfigureAwait(false);
+                }
+                else if (_browser?.BrowserApproved == true)
+                {
+                    try
+                    {
+                        // Resolve only within the authenticated Server's Received root.
+                        var store = LabRemoteFileStore.ForCurrentUser();
+                        store.SelectedFile(request.RelativeFile);
+                        if (await _browser.ApproveSelectedDownloadAsync(request.RelativeFile, stop)
+                            .ConfigureAwait(false))
+                            path = store.SelectedFile(request.RelativeFile);
+                    }
+                    catch (Exception ex) when (ex is IOException or InvalidDataException or
+                        UnauthorizedAccessException) { path = null; }
+                }
                 // The operator can take time to choose; recheck before disclosure.
                 if (!_authorized() || stop.IsCancellationRequested) path = null;
                 if (path is null)
@@ -134,19 +160,24 @@ internal sealed class LabServerTransferSession : IDisposable
                     _sendOffer = null; _sendPath = null;
                     break;
                 }
-                await LabFileTransfer.SendChunksAsync(_sendPath, _sendOffer,
-                    async (type, data, token) =>
-                    {
-                        // Revoking controller/desktop authorization also stops
-                        // in-flight downloads before another file chunk is emitted.
-                        if (!_authorized())
-                            throw new System.Security.Authentication.AuthenticationException(
-                                "Transfer authorization revoked during send.");
-                        await LabWire.WriteAsync(_tls, _writer, type, data, token)
-                            .ConfigureAwait(false);
-                    }, stop).ConfigureAwait(false);
+                // Never block the Server's packet-read loop on a multi-gigabyte
+                // download: incoming mouse/keyboard packets must remain responsive.
+                // TLS writes still share the existing frame/control semaphore.
+                var offeredFile = _sendOffer;
+                var sourcePath = _sendPath;
                 _awaitingResult = true;
-                _status("File sent to Viewer; awaiting SHA-256 confirmation.");
+                _outgoingDownload = SendOutgoingAsync(sourcePath, offeredFile, stop);
+                _ = _outgoingDownload.ContinueWith(task =>
+                {
+                    if (!stop.IsCancellationRequested && task.IsFaulted)
+                    {
+                        var failure = task.Exception!.GetBaseException();
+                        _status("Download stopped: " + failure.Message);
+                        _abortSession(failure); // Fail closed; discard partial file.
+                    }
+                }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+                _status("Sending file in background; remote inputs remain enabled.");
                 break;
             }
             case LabMessage.FileResult:
@@ -163,6 +194,19 @@ internal sealed class LabServerTransferSession : IDisposable
                 throw new InvalidDataException("Unsupported transfer message.");
         }
     }
+
+    private Task SendOutgoingAsync(string path, LabFileOffer offer, CancellationToken stop) =>
+        LabFileTransfer.SendChunksAsync(path, offer,
+            async (type, data, token) =>
+            {
+                // Recheck the active controller and desktop before every chunk,
+                // including the final completion message.
+                if (!_authorized())
+                    throw new System.Security.Authentication.AuthenticationException(
+                        "Transfer authorization revoked during send.");
+                await LabWire.WriteAsync(_tls, _writer, type, data, token)
+                    .ConfigureAwait(false);
+            }, stop);
 
     public void Dispose()
     {

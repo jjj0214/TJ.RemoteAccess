@@ -42,6 +42,24 @@ public sealed class LabProtocolTests
     }
 
     [Fact]
+    public async Task ManualScreenRefreshUsesEmptyBoundedFramedPacket()
+    {
+        LabWire.ValidateRefreshFrame(ReadOnlySpan<byte>.Empty);
+        Assert.Throws<InvalidDataException>(() =>
+            LabWire.ValidateRefreshFrame(new byte[] { 1 }));
+        using var stream = new MemoryStream();
+        using var mutex = new SemaphoreSlim(1, 1);
+        await LabWire.WriteAsync(stream, mutex, LabMessage.RefreshFrame,
+            ReadOnlyMemory<byte>.Empty, CancellationToken.None);
+        Assert.Equal(5, stream.Length); // 4-byte length, 1-byte tag, no data.
+        stream.Position = 0;
+        var message = await LabWire.ReadAsync(stream, CancellationToken.None);
+        Assert.Equal(LabMessage.RefreshFrame, message.Type);
+        Assert.Empty(message.Payload);
+        LabWire.ValidateRefreshFrame(message.Payload);
+    }
+
+    [Fact]
     public async Task FramedStreamRoundTrip()
     {
         using var stream = new MemoryStream();

@@ -7,11 +7,11 @@ using System.Text;
 
 namespace TJ.RemoteAccess.Lab;
 
-internal sealed record LabFileOffer(Guid Id, string FileName, long Length, byte[] Sha256);
+internal sealed record LabFileOffer(Guid Id, string FileName, long Length, byte[] Sha256, string TargetFolder = "");
 
 internal static class LabFileTransfer
 {
-    internal const long MaxFileBytes = 64L * 1024 * 1024;
+    internal const long MaxFileBytes = 4L * 1024 * 1024 * 1024;
     internal const int MaxChunkBytes = 48 * 1024;
     internal const int MaxPacketBytes = MaxChunkBytes + 32;
     internal const int MaxNameBytes = 180;
@@ -41,6 +41,7 @@ internal static class LabFileTransfer
             offer.Sha256 is not { Length: 32 })
             throw new InvalidDataException("Invalid transfer offer.");
         SafeFileName(offer.FileName);
+        LabRemoteFileWire.CheckRelative(offer.TargetFolder);
         return offer;
     }
 
@@ -48,30 +49,50 @@ internal static class LabFileTransfer
     {
         Validate(offer);
         var name = Encoding.UTF8.GetBytes(offer.FileName);
-        var packet = new byte[58 + name.Length];
+        byte[] folder = Encoding.UTF8.GetBytes(offer.TargetFolder);
+        var packet = new byte[58 + name.Length + (folder.Length == 0 ? 0 : 2 + folder.Length)];
+        if (folder.Length != 0)
+            BinaryPrimitives.WriteUInt16BigEndian(packet.AsSpan(58 + name.Length, 2), (ushort)folder.Length);
         offer.Id.TryWriteBytes(packet.AsSpan(0, 16));
         BinaryPrimitives.WriteInt64BigEndian(packet.AsSpan(16, 8), offer.Length);
         offer.Sha256.CopyTo(packet, 24);
         BinaryPrimitives.WriteUInt16BigEndian(packet.AsSpan(56, 2), (ushort)name.Length);
         name.CopyTo(packet, 58);
+        if (folder.Length != 0) folder.CopyTo(packet, 60 + name.Length);
         return packet;
     }
 
     internal static LabFileOffer ParseOffer(ReadOnlySpan<byte> payload)
     {
-        if (payload.Length < 59 || payload.Length > 58 + MaxNameBytes ||
-            !Guid.TryParse(new Guid(payload[..16]).ToString(), out var id))
+        if (payload.Length < 59 || payload.Length > 60 + MaxNameBytes + LabRemoteFileWire.MaxRelativePathBytes)
             throw new InvalidDataException("Invalid file offer header.");
+        Guid id = new(payload[..16]);
+        if (id == Guid.Empty) throw new InvalidDataException("Invalid file offer ID.");
         int nameSize = BinaryPrimitives.ReadUInt16BigEndian(payload.Slice(56, 2));
-        if (nameSize < 1 || nameSize > MaxNameBytes || payload.Length != 58 + nameSize)
+        int afterName = 58 + nameSize;
+        if (nameSize < 1 || nameSize > MaxNameBytes || payload.Length < afterName)
             throw new InvalidDataException("Invalid filename size.");
         string name;
-        try { name = new UTF8Encoding(false, true).GetString(payload.Slice(58, nameSize)); }
+        string folder = "";
+        try
+        {
+            var strictUtf8 = new UTF8Encoding(false, true);
+            name = strictUtf8.GetString(payload.Slice(58, nameSize));
+            if (payload.Length != afterName)
+            {
+                if (payload.Length < afterName + 3)
+                    throw new InvalidDataException("Invalid destination folder length.");
+                int folderSize = BinaryPrimitives.ReadUInt16BigEndian(payload.Slice(afterName, 2));
+                if (folderSize < 1 || payload.Length != afterName + 2 + folderSize)
+                    throw new InvalidDataException("Invalid destination folder size.");
+                folder = strictUtf8.GetString(payload[(afterName + 2)..]);
+            }
+        }
         catch (DecoderFallbackException ex)
-        { throw new InvalidDataException("Invalid UTF-8 transfer filename.", ex); }
+        { throw new InvalidDataException("Invalid UTF-8 file or folder.", ex); }
         return Validate(new LabFileOffer(id, name,
             BinaryPrimitives.ReadInt64BigEndian(payload.Slice(16, 8)),
-            payload.Slice(24, 32).ToArray()));
+            payload.Slice(24, 32).ToArray(), folder));
     }
 
     internal static byte[] Decision(Guid id, bool accepted)
@@ -131,7 +152,7 @@ internal static class LabFileTransfer
         var file = new FileInfo(path);
         if (!file.Exists || (file.Attributes & FileAttributes.ReparsePoint) != 0 ||
             file.Length > MaxFileBytes)
-            throw new InvalidDataException("File missing, linked, or exceeds 64 MiB.");
+            throw new InvalidDataException("File missing, linked, or exceeds 4 GiB.");
         string name = SafeFileName(file.Name);
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
             FileShare.Read, 64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
@@ -144,9 +165,13 @@ internal static class LabFileTransfer
         CancellationToken stop)
     {
         Validate(offer);
+        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("Linked source files cannot be transferred.");
         await using var input = new FileStream(path, FileMode.Open, FileAccess.Read,
             FileShare.Read, 64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
         if (input.Length != offer.Length) throw new IOException("File changed after offer.");
+        // Send fixed-size chunks and verify the exact bytes sent before completion.
+        using var sentHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         var buffer = new byte[MaxChunkBytes];
         long offset = 0;
         while (offset < offer.Length)
@@ -154,10 +179,13 @@ internal static class LabFileTransfer
             int read = await input.ReadAsync(buffer.AsMemory(0,
                 (int)Math.Min(buffer.Length, offer.Length - offset)), stop).ConfigureAwait(false);
             if (read == 0) throw new EndOfStreamException("File truncated during transfer.");
+            sentHash.AppendData(buffer.AsSpan(0, read));
             await send(LabMessage.FileChunk, Chunk(offer.Id, offset, buffer.AsSpan(0, read)), stop)
                 .ConfigureAwait(false);
             offset += read;
         }
+        if (!CryptographicOperations.FixedTimeEquals(sentHash.GetHashAndReset(), offer.Sha256))
+            throw new IOException("Source file changed during transfer; completion was not sent.");
         await send(LabMessage.FileComplete, TransferId(offer.Id), stop).ConfigureAwait(false);
     }
 }
@@ -184,11 +212,22 @@ internal sealed class LabFileReceiver : IDisposable
 
     internal static LabFileReceiver ForServer(LabFileOffer offer)
     {
-        string folder = ServerReceivedDirectory;
-        Directory.CreateDirectory(folder);
+        // A Viewer may choose only an existing subfolder inside this user's Received root.
+        // The Server operator still must approve every incoming file separately.
+        string folder = LabRemoteFileStore.ForCurrentUser().UploadFolder(offer.TargetFolder);
         string safe = LabFileTransfer.SafeFileName(offer.FileName);
-        // Randomized destination name prevents collisions with prior uploads.
-        string target = Path.Combine(folder, Guid.NewGuid().ToString("N") + "-" + safe);
+        // Preserve readable names for the dual-pane manager. Never overwrite an
+        // existing file: choose a numbered name, and still atomically commit with
+        // File.Move(overwrite:false) to fail safely on a concurrent race.
+        string target = Path.Combine(folder, safe);
+        string stem = Path.GetFileNameWithoutExtension(safe);
+        string suffix = Path.GetExtension(safe);
+        int index = 1;
+        while (File.Exists(target) || Directory.Exists(target))
+        {
+            if (index > 1000) throw new IOException("Too many files with the same name.");
+            target = Path.Combine(folder, stem + " (" + index++ + ")" + suffix);
+        }
         return new LabFileReceiver(offer, target);
     }
 

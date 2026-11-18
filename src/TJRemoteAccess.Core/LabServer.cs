@@ -653,7 +653,40 @@ internal sealed class LabServerForm : Form
 #else
                         return allowed;
 #endif
-                    }, Log);
+                    }, Log, failure => {
+                        // A failed asynchronous sender must tear down this TLS
+                        // session; otherwise the Viewer would wait forever for
+                        // FileComplete and retain an unfinished temporary file.
+                        Log("File download failed: " + failure.Message);
+                        try { lifetime.Cancel(); } catch (ObjectDisposedException) { }
+                        tcp.Dispose();
+                    });
+                var clipboard = new LabServerClipboardSession(this, tls, writeMutex,
+                    tcp.Client.RemoteEndPoint?.ToString() ?? "unknown",
+                    () => {
+                        bool permitted;
+                        lock (_guard)
+                            permitted = _running && _controller == session && _sessions.Contains(session) &&
+                                        !token.IsCancellationRequested;
+#if TJRA_STANDALONE_PREVIEW
+                        return permitted && TJ.RemoteAccess.M3.M3InteractiveDesktopGuard.IsNormalInteractiveDesktop();
+#else
+                        return permitted;
+#endif
+                    });
+                var fileBrowser = new LabServerRemoteFiles(this, tls, writeMutex,
+                    tcp.Client.RemoteEndPoint?.ToString() ?? "unknown",
+                    () => {
+                        bool permitted;
+                        lock (_guard) permitted = _running && _controller == session &&
+                            _sessions.Contains(session) && !token.IsCancellationRequested;
+#if TJRA_STANDALONE_PREVIEW
+                        return permitted && TJ.RemoteAccess.M3.M3InteractiveDesktopGuard.IsNormalInteractiveDesktop();
+#else
+                        return permitted;
+#endif
+                    });
+                transfers.SetRemoteFiles(fileBrowser);
                 var capture = SendFrames(tls, writeMutex, frames, remoteCert, clientPin,
                                          passwordMode, passwordVerifier, role, token);
                 // If capture fails (locked desktop, lost display, encoder),
@@ -666,6 +699,7 @@ internal sealed class LabServerForm : Form
                     tcp.Dispose(); // Unblock the read loop.
                 }, CancellationToken.None,
                 TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+                long lastRefreshAt = 0; // per-viewer refresh throttling
                 try
                 {
                     while (!token.IsCancellationRequested)
@@ -688,9 +722,42 @@ internal sealed class LabServerForm : Form
                         // turn a view-only session into a controller.
                         if (packet.Type == LabMessage.KeepAlive && packet.Payload.Length == 0)
                             continue;
+                        if (packet.Type == LabMessage.RefreshFrame)
+                        {
+                            LabWire.ValidateRefreshFrame(packet.Payload);
+                            bool allowed;
+                            lock (_guard)
+                                allowed = _running && _sessions.Contains(session) &&
+                                          !token.IsCancellationRequested;
+#if TJRA_STANDALONE_PREVIEW
+                            // A manual refresh must never reveal a locked/UAC desktop.
+                            if (!TJ.RemoteAccess.M3.M3InteractiveDesktopGuard.IsNormalInteractiveDesktop())
+                                throw new AuthenticationException("Refresh denied on protected desktop.");
+#endif
+                            long now = Environment.TickCount64;
+                            if (allowed && (lastRefreshAt == 0 || now - lastRefreshAt >= 800))
+                            {
+                                lastRefreshAt = now;
+                                var latest = frames.Latest;
+                                if (latest is not null)
+                                    await LabWire.WriteAsync(tls, writeMutex,
+                                        LabMessage.JpegFrame, latest.Jpeg, token);
+                            }
+                            continue;
+                        }
+                        if (packet.Type == LabMessage.FileManagerRequest)
+                        {
+                            await fileBrowser.HandleAsync(packet, token);
+                            continue;
+                        }
                         if (LabServerTransferSession.IsFileMessage(packet.Type))
                         {
                             await transfers.HandleAsync(packet, token);
+                            continue;
+                        }
+                        if (LabServerClipboardSession.IsClipboardMessage(packet.Type))
+                        {
+                            await clipboard.HandleAsync(packet, token);
                             continue;
                         }
                         if (packet.Type is not (LabMessage.Key or LabMessage.Pointer or

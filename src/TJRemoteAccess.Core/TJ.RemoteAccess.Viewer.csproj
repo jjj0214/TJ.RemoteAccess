@@ -16,8 +16,12 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="LabProtocol.cs" />
+    <Compile Include="LabClipboardWire.cs" />
     <Compile Include="LabFileTransfer.cs" />
     <Compile Include="LabViewerTransfers.cs" />
+    <Compile Include="LabRemoteFileManager.cs" />
+    <Compile Include="LabRemoteFileClient.cs" />
+    <Compile Include="LabTransferFilesForm.cs" />
     <Compile Include="LabConnectionOptions.cs" />
     <Compile Include="LabCertificates.cs" />
     <Compile Include="LabViewerProfiles.cs" />

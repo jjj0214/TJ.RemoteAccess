@@ -64,8 +64,12 @@ internal sealed class LabViewerForm : Form
     private readonly Button _pauseDisplay = new() { Text = "Pause display", AutoSize = true };
     private readonly Button _snapshot = new() { Text = "Save snapshot", AutoSize = true };
     private readonly Button _sendTaskManager = new() { Text = "Send Ctrl+Shift+Esc", AutoSize = true };
+    private readonly Button _refreshScreen = new() { Text = "Refresh screen", AutoSize = true };
+    private readonly Button _connectionInfo = new() { Text = "Connection info", AutoSize = true };
     private readonly Button _sendFile = new() { Text = "Send file...", AutoSize = true };
     private readonly Button _receiveFile = new() { Text = "Receive file...", AutoSize = true };
+    private readonly Button _transferFiles = new() { Text = "Transfer Files...", AutoSize = true };
+    private readonly LabRemoteFileClient _remoteFileClient;
     private readonly LabViewerTransfers _transfers;
     private readonly Button _connectionOptionsButton = new() { Text = "Connection options...", AutoSize = true };
     private readonly Button _reconnect = new() { Text = "Reconnect", AutoSize = true };
@@ -73,9 +77,19 @@ internal sealed class LabViewerForm : Form
     private LabViewerConnectionOptions _options;
     private readonly System.Windows.Forms.Timer _reconnectTimer = new() { Interval = 4000 };
     private int _reconnectAttempts;
+    private LabViewerProfile? _activeProfile;
+    private DateTimeOffset _connectedAt;
+    private ToolStripMenuItem? _ctrlToggle;
+    private ToolStripMenuItem? _altToggle;
+    private readonly object _clipboardGuard = new();
+    private Guid? _clipboardWriteId;
+    private Guid? _clipboardReadId;
     private bool _manualDisconnect;
     private bool _fullScreen;
     private volatile bool _displayPaused;
+    private LabTransferFilesForm? _transferFilesWindow;
+    private string? _managerDownloadFolder;
+    private string? _managerExpectedFile;
     private readonly Label _status = new() {
         Dock = DockStyle.Bottom, Height = 28, TextAlign = ContentAlignment.MiddleLeft,
         Padding = new Padding(8)
@@ -105,7 +119,12 @@ internal sealed class LabViewerForm : Form
     {
         _profileStore = profileStore;
         _options = LabViewerConnectionOptions.Load();
-        _transfers = new LabViewerTransfers(SendTransferAsync, SelectDownloadDestinationAsync, ShowStatus);
+        _remoteFileClient = new LabRemoteFileClient(SendTransferAsync);
+        _transfers = new LabViewerTransfers(SendTransferAsync, SelectDownloadDestinationAsync,
+            message => {
+                ShowStatus(message);
+                _transferFilesWindow?.ReportStatus(message);
+            }, (done, total) => _transferFilesWindow?.ReportProgress(done, total));
 #if TJRA_STANDALONE_PREVIEW
         Text = "TJ.RemoteAccess Viewer - PREVIEW";
 #else
@@ -146,19 +165,21 @@ internal sealed class LabViewerForm : Form
         toolbar.Controls.Add(_disconnect);
         toolbar.Controls.Add(_reconnect);
         toolbar.Controls.Add(_connectionOptionsButton);
+        toolbar.Controls.Add(_connectionInfo);
         toolbar.Controls.Add(_fullScreenButton);
-        _displayMode.Items.AddRange(new object[] { "Fit", "50%", "75%", "100%", "125%", "150%", "200%" });
+        _displayMode.Items.AddRange(new object[] { "Fit", "10%", "15%", "25%", "50%", "75%", "90%", "100%", "125%", "150%", "200%", "400%" });
         _displayMode.SelectedIndex = 0;
         toolbar.Controls.Add(_displayMode);
         toolbar.Controls.Add(_pauseDisplay);
+        toolbar.Controls.Add(_refreshScreen);
         toolbar.Controls.Add(_snapshot);
         toolbar.Controls.Add(_sendTaskManager);
-        toolbar.Controls.Add(_sendFile);
-        toolbar.Controls.Add(_receiveFile);
+        toolbar.Controls.Add(_transferFiles);
         _canvasHost.Controls.Add(_picture);
         Controls.Add(_canvasHost);
         Controls.Add(_status);
         Controls.Add(toolbar);
+        InstallViewerMenu(toolbar);
         _connect.Click += async (_, _) => await ConnectAsync();
         _profilePicker.SelectedIndexChanged += (_, _) => ApplySelectedProfile();
         _addProfile.Click += (_, _) => AddServerProfile();
@@ -178,6 +199,8 @@ internal sealed class LabViewerForm : Form
             await ConnectAsync();
         };
         _connectionOptionsButton.Click += async (_, _) => await ConfigureConnectionOptionsAsync();
+        _connectionInfo.Click += (_, _) => ShowConnectionInfo();
+        _refreshScreen.Click += async (_, _) => await RequestScreenRefreshAsync();
         _fullScreenButton.Click += (_, _) => SetFullScreen(!_fullScreen);
         _displayMode.SelectedIndexChanged += (_, _) => ApplyDisplayScale();
         _pauseDisplay.Click += async (_, _) => await ToggleDisplayPauseAsync();
@@ -185,6 +208,7 @@ internal sealed class LabViewerForm : Form
         _sendTaskManager.Click += async (_, _) => await SendTaskManagerShortcutAsync();
         _sendFile.Click += async (_, _) => await SendSelectedFileAsync();
         _receiveFile.Click += async (_, _) => await RequestFileAsync();
+        _transferFiles.Click += (_, _) => OpenTransferFiles();
         _picture.MouseDown += async (_, e) => {
             _picture.Focus();
             await SendPointerAsync(e.Location, force: true);
@@ -204,6 +228,7 @@ internal sealed class LabViewerForm : Form
         };
         KeyUp += async (_, e) => await OnRemoteKey(e, pressed: false);
         Deactivate += async (_, _) => await ReleaseHeldKeysAsync();
+        _picture.LostFocus += async (_, _) => await ReleaseHeldKeysAsync();
         FormClosing += (_, _) => { _manualDisconnect = true; Disconnect(); };
         _keepAlive.Tick += async (_, _) => {
             if (_connected)
@@ -229,7 +254,281 @@ internal sealed class LabViewerForm : Form
 #endif
     }
 
+    // TightVNC-style commands remain reachable even with the crowded toolbar hidden.
+    private void InstallViewerMenu(FlowLayoutPanel toolbar)
+    {
+        var menu = new MenuStrip { Dock = DockStyle.Top };
+        var session = new ToolStripMenuItem("&Connection");
+        session.DropDownItems.Add("Connection &info...", null, (_, _) => ShowConnectionInfo());
+        session.DropDownItems.Add("&Refresh screen", null, async (_, _) => await RequestScreenRefreshAsync());
+        session.DropDownItems.Add("&New connection...", null, (_, _) => {
+            _manualDisconnect = true; Disconnect(); _profilePicker.Focus();
+        });
+        var view = new ToolStripMenuItem("&View");
+        var toolbarItem = new ToolStripMenuItem("Show &toolbar") {
+            Checked = true, CheckOnClick = true, ShortcutKeys = Keys.F8
+        };
+        toolbarItem.CheckedChanged += (_, _) => toolbar.Visible = toolbarItem.Checked;
+        view.DropDownItems.Add(toolbarItem);
+        view.DropDownItems.Add("&Fit to window", null, (_, _) => _displayMode.SelectedIndex = 0);
+        view.DropDownItems.Add("&Actual size (100%)", null, (_, _) => _displayMode.SelectedIndex = 7);
+        view.DropDownItems.Add("&Full screen", null, (_, _) => SetFullScreen(!_fullScreen));
+        view.DropDownItems.Add("&Pause / Resume", null, async (_, _) => await ToggleDisplayPauseAsync());
+        var keyMenu = new ToolStripMenuItem("Send &keys");
+        keyMenu.DropDownItems.Add("Ctrl+Esc (Start)", null, async (_, _) =>
+            await SendShortcutAsync((ushort)Keys.ControlKey, (ushort)Keys.Escape));
+        keyMenu.DropDownItems.Add("Alt+Tab", null, async (_, _) =>
+            await SendShortcutAsync((ushort)Keys.Menu, (ushort)Keys.Tab));
+        keyMenu.DropDownItems.Add("Ctrl+Shift+Esc (Task Manager)", null, async (_, _) =>
+            await SendTaskManagerShortcutAsync());
+        _ctrlToggle = new ToolStripMenuItem("Hold Ctrl");
+        _altToggle = new ToolStripMenuItem("Hold Alt");
+        _ctrlToggle.Click += async (_, _) => await ToggleModifierAsync((ushort)Keys.ControlKey);
+        _altToggle.Click += async (_, _) => await ToggleModifierAsync((ushort)Keys.Menu);
+        keyMenu.DropDownItems.Add(_ctrlToggle);
+        keyMenu.DropDownItems.Add(_altToggle);
+        var clipboardMenu = new ToolStripMenuItem("&Clipboard");
+        clipboardMenu.DropDownItems.Add("Send local &text to Server...", null,
+            async (_, _) => await SendLocalClipboardAsync());
+        clipboardMenu.DropDownItems.Add("Request Server text &clipboard...", null,
+            async (_, _) => await RequestRemoteClipboardAsync());
+        var filesMenu = new ToolStripMenuItem("&Files");
+        filesMenu.DropDownItems.Add("Transfer Files...", null, (_, _) => OpenTransferFiles());
+        filesMenu.DropDownItems.Add("Quick send one file...", null,
+            async (_, _) => await SendSelectedFileAsync());
+        filesMenu.DropDownItems.Add("Quick receive Server-selected file...", null,
+            async (_, _) => await RequestFileAsync());
+        menu.Items.Add(session);
+        menu.Items.Add(view);
+        menu.Items.Add(keyMenu);
+        menu.Items.Add(clipboardMenu);
+        menu.Items.Add(filesMenu);
+        Controls.Add(menu);
+        MainMenuStrip = menu;
+    }
+
+    private void OpenTransferFiles()
+    {
+        if (!CanControl)
+        { ShowStatus("Connect as Controller to open Transfer Files."); return; }
+        if (_transferFilesWindow is { IsDisposed: false } existing)
+        { existing.BringToFront(); existing.Activate(); return; }
+        var window = new LabTransferFilesForm(
+            (action, relative, name, stop) =>
+                _remoteFileClient.ExecuteAsync(action, relative, name, stop),
+            async (localFile, remoteFolder, stop) =>
+            {
+                if (!CanControl || _stop?.IsCancellationRequested != false)
+                    throw new IOException("Remote session no longer permits file transfer.");
+                if (!await _transfers.UploadAsync(localFile, stop, remoteFolder))
+                    throw new InvalidOperationException("Server did not approve or verify the upload.");
+            },
+            async (remoteFile, localFolder, stop) =>
+            {
+                if (!CanControl || _stop?.IsCancellationRequested != false)
+                    throw new IOException("Remote session no longer permits file transfer.");
+                _managerDownloadFolder = localFolder;
+                _managerExpectedFile = remoteFile.Split('/')[^1];
+                try
+                {
+                    if (!await _transfers.DownloadAsync(stop, remoteFile))
+                        throw new InvalidOperationException("Server did not approve or verify the download.");
+                }
+                finally
+                { _managerDownloadFolder = null; _managerExpectedFile = null; }
+            },
+            () => CanControl,
+            () => { _manualDisconnect = true; Disconnect(); });
+        _transferFilesWindow = window;
+        window.FormClosed += (_, _) => {
+            if (ReferenceEquals(_transferFilesWindow, window)) _transferFilesWindow = null;
+        };
+        window.Show(this);
+    }
+
     private bool CanControl => _connected && !_displayPaused && !_options.ViewOnly && _role == LabRole.Controller;
+
+    private async Task RequestScreenRefreshAsync()
+    {
+        if (!_connected || _displayPaused)
+        {
+            ShowStatus(_displayPaused ? "Resume display before refreshing." : "Connect before refreshing remote screen.");
+            return;
+        }
+        await SendAsync(LabMessage.RefreshFrame, ReadOnlyMemory<byte>.Empty);
+        ShowStatus("Requested full remote screen refresh over authenticated TLS.");
+    }
+
+    private async Task SendLocalClipboardAsync()
+    {
+        if (!CanControl || _stop is null)
+        { ShowStatus("Controller permission required for clipboard transfer."); return; }
+        Guid id = Guid.NewGuid();
+        lock (_clipboardGuard)
+        {
+            if (_clipboardWriteId.HasValue || _clipboardReadId.HasValue)
+            { ShowStatus("A clipboard request is already in progress."); return; }
+            _clipboardWriteId = id;
+        }
+        try
+        {
+            if (!Clipboard.ContainsText(TextDataFormat.UnicodeText))
+                throw new InvalidDataException("Local clipboard has no text.");
+            string text = Clipboard.GetText(TextDataFormat.UnicodeText);
+            byte[] payload = LabClipboardWire.Text(id, text);
+            await SendTransferAsync(LabMessage.ClipboardSet, payload);
+            ShowStatus("Waiting for Server user's clipboard write approval...");
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or
+            InvalidOperationException or UnauthorizedAccessException or OperationCanceledException or
+            System.Runtime.InteropServices.ExternalException)
+        {
+            lock (_clipboardGuard) if (_clipboardWriteId == id) _clipboardWriteId = null;
+            ShowStatus("Unable to send clipboard text: " + ex.Message);
+        }
+    }
+
+    private async Task RequestRemoteClipboardAsync()
+    {
+        if (!CanControl) { ShowStatus("Controller permission required for clipboard transfer."); return; }
+        Guid id = Guid.NewGuid();
+        lock (_clipboardGuard)
+        {
+            if (_clipboardWriteId.HasValue || _clipboardReadId.HasValue)
+            { ShowStatus("A clipboard request is already in progress."); return; }
+            _clipboardReadId = id;
+        }
+        try
+        {
+            await SendTransferAsync(LabMessage.ClipboardGet, LabClipboardWire.Request(id));
+            ShowStatus("Waiting for Server user's permission to share text clipboard...");
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or
+            InvalidOperationException or OperationCanceledException)
+        {
+            lock (_clipboardGuard) if (_clipboardReadId == id) _clipboardReadId = null;
+            ShowStatus("Unable to request remote clipboard: " + ex.Message);
+        }
+    }
+
+    private async Task HandleClipboardResponseAsync(LabPacket packet, CancellationToken token)
+    {
+        if (packet.Type == LabMessage.ClipboardDecision)
+        {
+            var decision = LabClipboardWire.ParseDecision(packet.Payload);
+            bool isWrite;
+            lock (_clipboardGuard)
+            {
+                isWrite = _clipboardWriteId == decision.Id;
+                if (isWrite) _clipboardWriteId = null;
+                else if (_clipboardReadId == decision.Id && !decision.Approved) _clipboardReadId = null;
+                else throw new InvalidDataException("Unsolicited clipboard decision.");
+            }
+            ShowStatus(isWrite ? (decision.Approved ? "Server clipboard text updated by approval." :
+                "Server denied clipboard write.") : "Server denied clipboard sharing.");
+            return;
+        }
+        if (packet.Type != LabMessage.ClipboardText)
+            throw new InvalidDataException("Unexpected clipboard response.");
+        var response = LabClipboardWire.ParseText(packet.Payload);
+        lock (_clipboardGuard)
+            if (_clipboardReadId != response.Id)
+                throw new InvalidDataException("Unrequested remote clipboard text.");
+        bool applied = false;
+        var signal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            BeginInvoke(new Action(() => {
+                try
+                {
+                    if (!CanControl || IsDisposed) { signal.TrySetResult(false); return; }
+                    bool accepted = MessageBox.Show(this,
+                        "The Server user approved sharing text (" + response.Text.Length +
+                        " characters). Replace THIS PC's clipboard? It may contain secrets.",
+                        "TJ.RemoteAccess - Receive clipboard text", MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) == DialogResult.Yes;
+                    if (accepted && CanControl) Clipboard.SetText(response.Text, TextDataFormat.UnicodeText);
+                    signal.TrySetResult(accepted && CanControl);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or
+                    System.Runtime.InteropServices.ExternalException)
+                { signal.TrySetResult(false); }
+            }));
+            applied = await signal.Task.WaitAsync(TimeSpan.FromMinutes(2), token);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException or
+            TimeoutException or OperationCanceledException)
+        { applied = false; }
+        finally
+        {
+            lock (_clipboardGuard) if (_clipboardReadId == response.Id) _clipboardReadId = null;
+        }
+        ShowStatus(applied ? "Remote clipboard text copied after local approval." :
+            "Remote clipboard was not pasted.");
+    }
+
+    private void ShowConnectionInfo()
+    {
+        var profile = _activeProfile;
+        if (!_connected || _tls is null || profile is null)
+        {
+            MessageBox.Show(this, "Not connected.", "Connection information");
+            return;
+        }
+        string details = string.Join(Environment.NewLine,
+            "Endpoint: " + profile.Host + ":" + profile.Port,
+            "Profile: " + profile.Name,
+            "Access: " + profile.AuthMode + " / " + _role,
+            "TLS: " + _tls.SslProtocol,
+            "Server SHA-256 pin: " + profile.ServerSha256,
+            "Desktop: " + _desktopWidth + " x " + _desktopHeight,
+            "Frames rendered: " + _frameCount,
+            "Session started (UTC): " + _connectedAt.ToString("u"),
+            "Preferred JPEG quality: " + _options.JpegQuality,
+            "Preferred FPS: " + _options.FramesPerSecond,
+            "Secure desktop / UAC: Not supported");
+        MessageBox.Show(this, details, "TJ.RemoteAccess - Connection information",
+            MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private async Task SendShortcutAsync(params ushort[] shortcut)
+    {
+        if (!CanControl) { ShowStatus("Controller permission required to send keys."); return; }
+        ushort[] keys = shortcut.Where(key => !_heldKeys.Contains(key)).ToArray();
+        try
+        {
+            foreach (ushort key in keys)
+                await SendAsync(LabMessage.Key, LabWire.Key(key, true));
+        }
+        finally
+        {
+            for (int i = keys.Length - 1; i >= 0; i--)
+                await SendAsync(LabMessage.Key, LabWire.Key(keys[i], false));
+        }
+    }
+
+    private async Task ToggleModifierAsync(ushort key)
+    {
+        if (!CanControl) { ShowStatus("Controller permission required to hold keys."); return; }
+        bool pressed = _heldKeys.Add(key);
+        if (!pressed) _heldKeys.Remove(key);
+        await SendAsync(LabMessage.Key, LabWire.Key(key, pressed));
+        UpdateModifierMenus();
+    }
+
+    private void UpdateModifierMenus()
+    {
+        if (_ctrlToggle is not null)
+        {
+            _ctrlToggle.Checked = _heldKeys.Contains((ushort)Keys.ControlKey);
+            _ctrlToggle.Enabled = CanControl;
+        }
+        if (_altToggle is not null)
+        {
+            _altToggle.Checked = _heldKeys.Contains((ushort)Keys.Menu);
+            _altToggle.Enabled = CanControl;
+        }
+    }
 
     private async Task ConfigureConnectionOptionsAsync()
     {
@@ -304,11 +603,20 @@ internal sealed class LabViewerForm : Form
     {
         if (!CanControl || _stop is null) return;
         using var pick = new OpenFileDialog {
-            Title = "Choose file to send to Server (64 MiB maximum)",
-            Filter = "All files (*.*)|*.*", CheckFileExists = true, Multiselect = false
+            Title = "Select files (up to 32; each <=4 GiB; Server approves each)",
+            Filter = "All files (*.*)|*.*", CheckFileExists = true, Multiselect = true
         };
         if (pick.ShowDialog(this) != DialogResult.OK) return;
-        try { await _transfers.UploadAsync(pick.FileName, _stop.Token); }
+        if (pick.FileNames.Length > 32) { ShowStatus("Select at most 32 files per batch."); return; }
+        try
+        {
+            foreach (string file in pick.FileNames)
+            {
+                if (!CanControl || _stop.Token.IsCancellationRequested) break;
+                // Every file is a separate, user-approved TLS transfer.
+                await _transfers.UploadAsync(file, _stop.Token);
+            }
+        }
         catch (Exception ex) when (ex is IOException or InvalidDataException or
             UnauthorizedAccessException or OperationCanceledException or TimeoutException or
             InvalidOperationException or System.Security.Cryptography.CryptographicException)
@@ -335,8 +643,32 @@ internal sealed class LabViewerForm : Form
             BeginInvoke(new Action(() =>
             {
                 if (IsDisposed || !CanControl) { completion.TrySetResult(null); return; }
+                if (_managerDownloadFolder is { } selectedFolder)
+                {
+                    try
+                    {
+                        string safeName = LabFileTransfer.SafeFileName(offer.FileName);
+                        if (!string.Equals(safeName, _managerExpectedFile,
+                                StringComparison.OrdinalIgnoreCase))
+                            throw new InvalidDataException("Server offered an unexpected filename.");
+                        if (!Directory.Exists(selectedFolder) ||
+                            (File.GetAttributes(selectedFolder) & FileAttributes.ReparsePoint) != 0)
+                            throw new InvalidDataException("Local destination is missing or redirected.");
+                        string destination = Path.Combine(selectedFolder, safeName);
+                        if (File.Exists(destination) || Directory.Exists(destination))
+                            throw new IOException("Local file already exists; no overwrite permitted.");
+                        completion.TrySetResult(destination);
+                    }
+                    catch (Exception ex) when (ex is IOException or InvalidDataException or
+                        UnauthorizedAccessException)
+                    {
+                        ShowStatus("Download destination denied: " + ex.Message);
+                        completion.TrySetResult(null);
+                    }
+                    return;
+                }
                 using var save = new SaveFileDialog {
-                    Title = "Save file offered by Server (64 MiB maximum)",
+                    Title = "Save file offered by Server (4 GiB maximum)",
                     FileName = offer.FileName, Filter = "All files (*.*)|*.*",
                     AddExtension = false, OverwritePrompt = true
                 };
@@ -464,8 +796,15 @@ private LabViewerProfile? SelectedProfile =>
         _connect.Enabled = !busy && SelectedProfile is not null;
         _disconnect.Enabled = busy;
         _reconnect.Enabled = !_connecting && SelectedProfile is not null;
+        _transferFiles.Enabled = CanControl;
         _sendFile.Enabled = CanControl;
         _receiveFile.Enabled = CanControl;
+        _connectionInfo.Enabled = _connected;
+        _refreshScreen.Enabled = _connected && !_displayPaused;
+        _pauseDisplay.Enabled = _connected;
+        _snapshot.Enabled = _connected && _picture.Image is not null;
+        _sendTaskManager.Enabled = CanControl;
+        UpdateModifierMenus();
     }
 
     private void AddServerProfile()
@@ -657,6 +996,8 @@ private LabViewerProfile? SelectedProfile =>
             if (_role == LabRole.Controller)
                 await LabWire.WriteAsync(_tls, _outgoingMutex, LabMessage.CaptureOptions,
                     LabWire.CaptureSettings((byte)_options.JpegQuality, (byte)_options.FramesPerSecond), token);
+            _activeProfile = profile;
+            _connectedAt = DateTimeOffset.UtcNow;
             _connected = true;
             _manualDisconnect = false;
             _reconnectAttempts = 0;
@@ -698,6 +1039,16 @@ private LabViewerProfile? SelectedProfile =>
                 if (LabViewerTransfers.IsFileMessage(packet.Type))
                 {
                     await _transfers.HandleAsync(packet, token);
+                    continue;
+                }
+                if (packet.Type is LabMessage.ClipboardDecision or LabMessage.ClipboardText)
+                {
+                    await HandleClipboardResponseAsync(packet, token);
+                    continue;
+                }
+                if (packet.Type == LabMessage.FileManagerReply)
+                {
+                    _remoteFileClient.HandleReply(packet.Payload);
                     continue;
                 }
                 if (packet.Type != LabMessage.JpegFrame)
@@ -835,7 +1186,7 @@ private LabViewerProfile? SelectedProfile =>
 
     private async Task OnRemoteKey(KeyEventArgs e, bool pressed)
     {
-        if (!CanControl) return;
+        if (!CanControl || !_picture.Focused) return;
         ushort vk = (ushort)e.KeyCode;
         if (vk is < 1 or > 254) return;
         bool shouldSend = pressed ? _heldKeys.Add(vk) : _heldKeys.Remove(vk);
@@ -848,6 +1199,7 @@ private LabViewerProfile? SelectedProfile =>
     {
         if (!CanControl) {
             _heldKeys.Clear();
+            UpdateModifierMenus();
             return;
         }
         var oldKeys = _heldKeys.ToArray();
@@ -856,6 +1208,7 @@ private LabViewerProfile? SelectedProfile =>
             await SendAsync(LabMessage.Key, LabWire.Key(key, pressed: false));
         await SendAsync(LabMessage.Pointer, LabWire.Pointer((ushort)_lastX,
                                                            (ushort)_lastY, 0));
+        UpdateModifierMenus();
     }
 
     private async Task SendPointerAsync(Point location, bool force = false)
@@ -896,6 +1249,7 @@ private LabViewerProfile? SelectedProfile =>
         if ((Control.MouseButtons & MouseButtons.Left) != 0) buttons |= 1;
         if ((Control.MouseButtons & MouseButtons.Right) != 0) buttons |= 2;
         if ((Control.MouseButtons & MouseButtons.Middle) != 0) buttons |= 4;
+        buttons = _options.MapMouseButtons(buttons);
         await SendAsync(LabMessage.Pointer, LabWire.Pointer(normalizedX,
                                                            normalizedY, buttons));
     }
@@ -903,8 +1257,13 @@ private LabViewerProfile? SelectedProfile =>
     private void Disconnect()
     {
         _connected = false;
+        _activeProfile = null;
         _reconnectTimer.Stop();
+        _remoteFileClient.Disconnect();
         _transfers.Disconnect();
+        _transferFilesWindow?.SessionClosed();
+        _managerDownloadFolder = null;
+        _managerExpectedFile = null;
         _stop?.Cancel();
         _tcp?.Dispose();
         _tls?.Dispose();
@@ -912,7 +1271,13 @@ private LabViewerProfile? SelectedProfile =>
         _tls = null;
         _stop?.Dispose();
         _stop = null;
+        lock (_clipboardGuard)
+        {
+            _clipboardWriteId = null;
+            _clipboardReadId = null;
+        }
         _heldKeys.Clear();
+        UpdateModifierMenus();
         _displayPaused = false;
         _pauseDisplay.Text = "Pause display";
         _role = LabRole.ViewOnly;

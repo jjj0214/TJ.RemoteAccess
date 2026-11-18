@@ -16,9 +16,14 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="LabProtocol.cs" />
+    <Compile Include="LabClipboardWire.cs" />
+    <Compile Include="LabClipboardConsent.cs" />
+    <Compile Include="LabServerClipboardSession.cs" />
     <Compile Include="LabFileTransfer.cs" />
     <Compile Include="LabTransferConsent.cs" />
     <Compile Include="LabServerTransferSession.cs" />
+    <Compile Include="LabRemoteFileManager.cs" />
+    <Compile Include="LabServerRemoteFiles.cs" />
     <Compile Include="LabCertificates.cs" />
     <Compile Include="LabServer.cs" />
     <Compile Include="LabServerTray.cs" />

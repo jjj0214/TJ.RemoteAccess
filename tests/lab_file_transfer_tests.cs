@@ -141,4 +141,71 @@ public sealed class LabFileTransferTests
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
+    [Fact]
+    public async Task LargerThan64MiBFileIsStreamingAndShaVerified()
+    {
+        const int fileBytes = 72 * 1024 * 1024;
+        string root = Path.Combine(Path.GetTempPath(), "TJRA-Large-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            string source = Path.Combine(root, "large.bin");
+            string destination = Path.Combine(root, "large-received.bin");
+            using (var seed = File.Create(source)) seed.SetLength(fileBytes);
+            var offer = await LabFileTransfer.OfferFromFileAsync(source, CancellationToken.None);
+            Assert.True(offer.Length > 64L * 1024 * 1024);
+            int chunkCount = 0;
+            int maxPayload = 0;
+            using (var receiver = new LabFileReceiver(offer, destination))
+            {
+                await LabFileTransfer.SendChunksAsync(source, offer, (type, payload, _) =>
+                {
+                    if (type == LabMessage.FileChunk)
+                    {
+                        maxPayload = Math.Max(maxPayload, payload.Length);
+                        var chunk = LabFileTransfer.ParseChunk(payload.Span);
+                        receiver.AddChunk(chunk.Id, chunk.Offset, chunk.Data);
+                        chunkCount++;
+                    }
+                    else
+                    {
+                        Assert.Equal(LabMessage.FileComplete, type);
+                        Assert.Equal(destination, receiver.Finish(
+                            LabFileTransfer.ParseTransferId(payload.Span)));
+                    }
+                    return Task.CompletedTask;
+                }, CancellationToken.None);
+            }
+            Assert.True(chunkCount > 1000);
+            Assert.InRange(maxPayload, 1, LabFileTransfer.MaxChunkBytes + 24);
+            Assert.Equal(fileBytes, new FileInfo(destination).Length);
+            await using var verified = File.OpenRead(destination);
+            Assert.Equal(offer.Sha256, await SHA256.HashDataAsync(verified));
+            Assert.Empty(Directory.EnumerateFiles(root, "*.partial"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task ChangedSourceMustNotEmitSuccessfulCompletion()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "TJRA-Changed-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            string source = Path.Combine(root, "changed.bin");
+            File.WriteAllBytes(source, new byte[] { 1, 2, 3, 4 });
+            var offer = await LabFileTransfer.OfferFromFileAsync(source, CancellationToken.None);
+            File.WriteAllBytes(source, new byte[] { 1, 2, 3, 5 });
+            bool completed = false;
+            await Assert.ThrowsAsync<IOException>(() => LabFileTransfer.SendChunksAsync(
+                source, offer, (type, _, _) =>
+                {
+                    if (type == LabMessage.FileComplete) completed = true;
+                    return Task.CompletedTask;
+                }, CancellationToken.None));
+            Assert.False(completed);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
 }

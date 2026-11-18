@@ -11,6 +11,7 @@ internal sealed class LabViewerTransfers : IDisposable
     private readonly Func<LabMessage, ReadOnlyMemory<byte>, Task> _send;
     private readonly Func<LabFileOffer, CancellationToken, Task<string?>> _selectDestination;
     private readonly Action<string> _status;
+    private readonly Action<long, long>? _progress;
     private Guid? _uploadId;
     private Guid? _downloadId;
     private TaskCompletionSource<bool>? _uploadDecision;
@@ -21,11 +22,12 @@ internal sealed class LabViewerTransfers : IDisposable
     internal LabViewerTransfers(
         Func<LabMessage, ReadOnlyMemory<byte>, Task> send,
         Func<LabFileOffer, CancellationToken, Task<string?>> selectDestination,
-        Action<string> status)
+        Action<string> status, Action<long, long>? progress = null)
     {
         _send = send;
         _selectDestination = selectDestination;
         _status = status;
+        _progress = progress;
     }
 
     internal static bool IsFileMessage(LabMessage type) => type is
@@ -34,9 +36,10 @@ internal sealed class LabViewerTransfers : IDisposable
 
     internal bool Busy { get { lock (_sync) return _uploadId.HasValue || _downloadId.HasValue; } }
 
-    internal async Task UploadAsync(string path, CancellationToken stop)
+    internal async Task<bool> UploadAsync(string path, CancellationToken stop, string remoteFolder = "")
     {
-        LabFileOffer offer = await LabFileTransfer.OfferFromFileAsync(path, stop);
+        LabFileOffer offer = (await LabFileTransfer.OfferFromFileAsync(path, stop)) with
+            { TargetFolder = LabRemoteFileWire.CheckRelative(remoteFolder) };
         TaskCompletionSource<bool> decision = NewSignal();
         TaskCompletionSource<bool> result = NewSignal();
         lock (_sync)
@@ -55,14 +58,26 @@ internal sealed class LabViewerTransfers : IDisposable
             if (!approved)
             {
                 _status("Server declined file transfer.");
-                return;
+                return false;
             }
-            _status("Sending " + offer.FileName + " (up to 64 MiB)...");
+            _status("Sending " + offer.FileName + " (up to 4 GiB)...");
+            long sent = 0;
+            _progress?.Invoke(0, offer.Length);
             await LabFileTransfer.SendChunksAsync(path, offer,
-                (type, body, ct) => _send(type, body), stop);
+                async (type, body, ct) =>
+                {
+                    ct.ThrowIfCancellationRequested();
+                    await _send(type, body);
+                    if (type == LabMessage.FileChunk)
+                    {
+                        sent += body.Length - 24; // Payload: 16-byte GUID + 8-byte offset.
+                        _progress?.Invoke(sent, offer.Length);
+                    }
+                }, stop);
             bool verified = await result.Task.WaitAsync(TimeSpan.FromMinutes(2), stop);
             _status(verified ? "Server verified received file: " + offer.FileName :
                 "Server rejected incomplete/corrupted file.");
+            return verified;
         }
         finally
         {
@@ -76,7 +91,7 @@ internal sealed class LabViewerTransfers : IDisposable
         }
     }
 
-    internal async Task DownloadAsync(CancellationToken stop)
+    internal async Task<bool> DownloadAsync(CancellationToken stop, string remoteFile = "")
     {
         Guid id = Guid.NewGuid();
         TaskCompletionSource<bool> result = NewSignal();
@@ -90,10 +105,12 @@ internal sealed class LabViewerTransfers : IDisposable
         try
         {
             _status("Requesting on-device Server consent to select a file...");
-            await _send(LabMessage.FileRequest, LabFileTransfer.TransferId(id));
+            await _send(LabMessage.FileRequest, remoteFile.Length == 0 ?
+                LabFileTransfer.TransferId(id) : LabRemoteFileWire.DownloadRequest(id, remoteFile));
             bool verified = await result.Task.WaitAsync(TimeSpan.FromMinutes(5), stop);
             _status(verified ? "File downloaded and SHA-256 verified." :
                 "Server declined or file was rejected.");
+            return verified;
         }
         finally
         {
@@ -168,7 +185,11 @@ internal sealed class LabViewerTransfers : IDisposable
                 {
                     lock (_sync) _downloadResult?.TrySetResult(false);
                 }
-                else _status("Receiving " + offer.FileName + "...");
+                else
+                {
+                    _progress?.Invoke(0, offer.Length);
+                    _status("Receiving " + offer.FileName + "...");
+                }
                 break;
             }
             case LabMessage.FileChunk:
@@ -178,6 +199,7 @@ internal sealed class LabViewerTransfers : IDisposable
                 lock (_sync)
                     receiver = _receive ?? throw new InvalidDataException("Unrequested transfer chunk.");
                 receiver.AddChunk(chunk.Id, chunk.Offset, chunk.Data);
+                _progress?.Invoke(receiver.Received, receiver.Total);
                 if (receiver.Received % (1024 * 1024) < chunk.Data.Length)
                     _status("Receiving file " + receiver.Received.ToString("N0") +
                             "/" + receiver.Total.ToString("N0") + " bytes");

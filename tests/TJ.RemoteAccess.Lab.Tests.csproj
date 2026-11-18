@@ -19,7 +19,13 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="lab_protocol_tests.cs" />
+    <Compile Include="lab_clipboard_tests.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\LabClipboardWire.cs" />
     <Compile Include="lab_file_transfer_tests.cs" />
+    <Compile Include="lab_remote_file_manager_tests.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\LabRemoteFileManager.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\LabRemoteFileClient.cs" />
+    <Compile Include="lab_remote_file_client_tests.cs" />
     <Compile Include="lab_viewer_transfer_state_tests.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\LabViewerTransfers.cs" />
     <Compile Include="lab_tls_tests.cs" />

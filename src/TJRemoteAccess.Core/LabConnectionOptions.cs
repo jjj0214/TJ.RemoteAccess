@@ -8,7 +8,7 @@ namespace TJ.RemoteAccess.Lab;
 
 internal sealed record LabViewerConnectionOptions(
     bool ViewOnly = false, bool FullScreen = false, bool AutoReconnect = false,
-    int JpegQuality = 65, int FramesPerSecond = 6)
+    int JpegQuality = 65, int FramesPerSecond = 6, bool SwapMouseButtons = false)
 {
     internal static string SettingsFile =>
         Path.Combine(LabCertificates.ConfigDirectory, "viewer-connection-options.json");
@@ -17,6 +17,15 @@ internal sealed record LabViewerConnectionOptions(
     {
         LabWire.CaptureSettings(checked((byte)JpegQuality), checked((byte)FramesPerSecond));
         return this;
+    }
+
+    // Original TightVNC Viewer supports swapping only the two primary mouse buttons.
+    // Middle-button state must remain unchanged; never alter remote click authority.
+    internal byte MapMouseButtons(byte buttons)
+    {
+        if ((buttons & ~7) != 0) throw new InvalidDataException("Invalid mouse buttons.");
+        if (!SwapMouseButtons) return buttons;
+        return (byte)((buttons & 4) | ((buttons & 1) << 1) | ((buttons & 2) >> 1));
     }
 
     internal bool MayAutoReconnect(bool authenticatedWithCertificate, bool manualDisconnect) =>
@@ -53,14 +62,14 @@ internal static class LabViewerConnectionOptionsDialog
     {
         using var form = new Form {
             Text = "TJ.RemoteAccess - Connection Options",
-            Width = 535, Height = 370, MinimumSize = new Size(485, 360),
+            Width = 555, Height = 405, MinimumSize = new Size(505, 390),
             StartPosition = FormStartPosition.CenterParent,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false, MinimizeBox = false
         };
         var layout = new TableLayoutPanel {
             Dock = DockStyle.Fill, Padding = new Padding(14),
-            RowCount = 7, ColumnCount = 2
+            RowCount = 8, ColumnCount = 2
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 175));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -78,11 +87,14 @@ internal static class LabViewerConnectionOptionsDialog
             Minimum = 2, Maximum = 20, Value = current.FramesPerSecond,
             DecimalPlaces = 0, Width = 80
         };
+        var swapMouse = new CheckBox { Text = "Swap left / right mouse buttons", AutoSize = true,
+            Checked = current.SwapMouseButtons };
         AddRow(0, "Input mode", viewOnly);
         AddRow(1, "Display", fullScreen);
         AddRow(2, "Recovery", autoReconnect);
         AddRow(3, "JPEG quality (25–90)", quality);
         AddRow(4, "Max FPS (2–20)", fps);
+        AddRow(5, "Mouse", swapMouse);
         var message = new Label {
             Dock = DockStyle.Fill,
             Text = "JPEG/FPS settings are shared by all viewers and applied only " +
@@ -91,7 +103,7 @@ internal static class LabViewerConnectionOptionsDialog
                    "Ctrl+Alt+Del / Winlogon / UAC are not supported.",
             AutoSize = false
         };
-        layout.Controls.Add(message, 0, 5);
+        layout.Controls.Add(message, 0, 6);
         layout.SetColumnSpan(message, 2);
         var buttons = new FlowLayoutPanel {
             Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft
@@ -100,14 +112,14 @@ internal static class LabViewerConnectionOptionsDialog
         var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true };
         buttons.Controls.Add(save);
         buttons.Controls.Add(cancel);
-        layout.Controls.Add(buttons, 0, 6);
+        layout.Controls.Add(buttons, 0, 7);
         layout.SetColumnSpan(buttons, 2);
         form.Controls.Add(layout);
         form.AcceptButton = save;
         form.CancelButton = cancel;
         if (form.ShowDialog(owner) != DialogResult.OK) return null;
         return new LabViewerConnectionOptions(viewOnly.Checked, fullScreen.Checked,
-            autoReconnect.Checked, (int)quality.Value, (int)fps.Value).Validate();
+            autoReconnect.Checked, (int)quality.Value, (int)fps.Value, swapMouse.Checked).Validate();
 
         void AddRow(int row, string label, Control ctrl)
         {

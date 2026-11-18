@@ -30,7 +30,9 @@
     <Compile Include="..\src\TJRemoteAccess.Core\PreviewInstallerCore.cs" />
     <Compile Include="..\\src\\TJRemoteAccess.Core\\LabViewerProfiles.cs" />
     <Compile Include="..\\src\\TJRemoteAccess.Core\\LabProtocol.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\LabClipboardWire.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\LabFileTransfer.cs" />
+    <Compile Include="..\src\TJRemoteAccess.Core\LabRemoteFileManager.cs" />
     <Compile Include="..\\src\\TJRemoteAccess.Core\\LabQuickPasswordTrust.cs" />
     <Compile Include="..\\src\\TJRemoteAccess.Core\\LabPasswordAccess.cs" />
     <Compile Include="..\src\TJRemoteAccess.Core\LabServerTray.cs" />
