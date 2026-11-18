@@ -22,7 +22,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 from prepare_m2_fork import DEFAULT_SOURCE, prepare  # noqa: E402
-from vendor_upstream import EXPECTED_SHA256, checksum  # noqa: E402
+from vendor_upstream import EXPECTED_SHA256, checksum, import_source  # noqa: E402
+from verify_upstream_tree import verify_tree  # noqa: E402
 from m2_fail_closed import EXPECTED_IDS  # noqa: E402
 from audit_m2_fork_security import audit_tree  # noqa: E402
 from m2_hook_namespace import EXPECTED_HOOK_IDS  # noqa: E402
@@ -75,8 +76,8 @@ class RealSourcePrerequisitePolicyTests(unittest.TestCase):
 
 class RealSourceForkAcceptance(unittest.TestCase):
     def test_prepare_and_audit_isolated_guarded_fork(self):
-        # This is intentionally restricted to JJJ Dev: only generate if both
-        # exact pinned archive and verified extracted source are present.
+        # A SHA-pinned local GPL archive is mandatory. Each linked worktree may
+        # import its own pristine copy, but never trust unverified source bytes.
         script = (ROOT / "tools" / "Build-M2Fork.ps1").read_text(encoding="utf-8-sig")
         match = DEFAULT_ZIP_PARAM.search(script)
         self.assertIsNotNone(match, "No pinned upstream ZIP configured in build workflow")
@@ -88,7 +89,12 @@ class RealSourceForkAcceptance(unittest.TestCase):
             self.skipTest(reason)
         self.assertTrue(zip_path.is_file(), f"Missing public GPL ZIP: {zip_path}")
         self.assertEqual(checksum(zip_path).lower(), EXPECTED_SHA256.lower())
-        self.assertTrue(DEFAULT_SOURCE.is_dir(), "Pristine GPL source must already exist")
+        if not DEFAULT_SOURCE.exists():
+            # Separate Git worktrees do not share ignored third_party assets.
+            # Import only a SHA-256 verified local archive; never auto-download.
+            import_source(zip_path, DEFAULT_SOURCE)
+        proof = verify_tree(zip_path, DEFAULT_SOURCE)
+        self.assertTrue(proof["exact_match"], "Pristine GPL source differs from the pinned ZIP")
         self.assertFalse(FORK.is_symlink(), "Refusing reparse point output directory")
 
         if FORK.exists():

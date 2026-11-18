@@ -31,6 +31,8 @@
 - Compact Installer CI #15 PASS: https://github.com/jjj0214/TJ.RemoteAccess/actions/runs/44208497265
 - Core CI #34 PASS: https://github.com/jjj0214/TJ.RemoteAccess/actions/runs/44208497344
 - 후속 워크트리 Release/Preview/Lab: Release PASS; Preview 54/54 PASS; Lab 187/187 PASS (새 파일전송 프레이밍 roundtrip 포함).
-- Python 전체 테스트는 pristine TightVNC GPL 소스 폴더 미존재로 기존 1건 실패/4건 skip: 완전 통과로 표기 금지.
+- **2026-11-18 원본 GPL 소스 재검증 해결:** JJJ Dev의 로컬 공식 TightVNC 2.8.90 ZIP(SHA-256 `f3f76393a5865e1f1919c78c3eb43b9c937cf738927c2bfc920ecbd3913b061c`)을 기준으로, 작업트리의 누락된 `third_party/tightvnc-2.8.90-gpl`을 자동 복원하고 원본 **1,264개 파일**을 ZIP과 전수 대조했다. 파생 v4 소스 신규 생성 및 인터록/네임스페이스 감사 재검증 PASS.
+- 최신 기능 브랜치 `feature/chatgpt-m3-service-final`의 Python 전체 재실행 결과: **130 tests, 실패 0건, skip 1건 (129 PASS)**. 유일한 skip은 별도 빌드 대상인 파생 C++ 실행 파일이 아직 생성되지 않았기 때문이며, 원본 소스·보안 감사 테스트는 전부 PASS. 이미 존재하는 원본 소스가 ZIP과 불일치하면 정상적으로 실패하도록 강제한다.
+- 복원한 원본·파생 소스는 `.gitignore` 적용 로컬 작업트리 경로에만 있고 공개 소스 Git 커밋이나 설치 파일에 자동 포함하지 않는다.
 - **2대의 실제 Windows PC 실기 GUI 수용은 미실행**. LAN TLS/비밀번호 접속, 송수신 승인·취소, 배율/마우스 스크롤 좌표, 잠금·로그오프·재시작, 3 Viewer·1 Controller, 24시간 안정성, TightVNC 공존을 실제 테스트해야 한다.
 - 기존 PC의 방화벽/TightVNC/서비스/설정은 임의 변경하지 않는다. 사용자 검증·승인 이전까지 main 병합과 정식 릴리즈는 보류.
