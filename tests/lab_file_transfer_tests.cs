@@ -97,4 +97,48 @@ public sealed class LabFileTransferTests
         }
         finally { Directory.Delete(root, recursive: true); }
     }
+
+    [Fact]
+    public async Task FramedFileTransportRoundTripsBatchedDataWithVerifiedCommit()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "TJRA-Transport-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var sourcePath = Path.Combine(dir, "source.bin");
+            var targetPath = Path.Combine(dir, "received.bin");
+            byte[] data = RandomNumberGenerator.GetBytes(150_123);
+            File.WriteAllBytes(sourcePath, data);
+            var offer = await LabFileTransfer.OfferFromFileAsync(sourcePath, CancellationToken.None);
+            using var wire = new MemoryStream();
+            using var sendLock = new SemaphoreSlim(1, 1);
+            await LabWire.WriteAsync(wire, sendLock, LabMessage.FileOffer,
+                LabFileTransfer.OfferBytes(offer), CancellationToken.None);
+            await LabFileTransfer.SendChunksAsync(sourcePath, offer,
+                (type, payload, stop) => LabWire.WriteAsync(wire, sendLock, type, payload, stop),
+                CancellationToken.None);
+            wire.Position = 0;
+            var request = await LabWire.ReadAsync(wire, CancellationToken.None);
+            Assert.Equal(LabMessage.FileOffer, request.Type);
+            Assert.Equal(offer.Id, LabFileTransfer.ParseOffer(request.Payload).Id);
+            using var receiver = new LabFileReceiver(offer, targetPath);
+            while (wire.Position < wire.Length)
+            {
+                var packet = await LabWire.ReadAsync(wire, CancellationToken.None);
+                if (packet.Type == LabMessage.FileChunk)
+                {
+                    var chunk = LabFileTransfer.ParseChunk(packet.Payload);
+                    receiver.AddChunk(chunk.Id, chunk.Offset, chunk.Data);
+                }
+                else
+                {
+                    Assert.Equal(LabMessage.FileComplete, packet.Type);
+                    Assert.Equal(targetPath, receiver.Finish(LabFileTransfer.ParseTransferId(packet.Payload)));
+                }
+            }
+            Assert.Equal(data, File.ReadAllBytes(targetPath));
+            Assert.Empty(Directory.EnumerateFiles(dir, "*.partial"));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
 }
