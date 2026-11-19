@@ -14,7 +14,8 @@ internal enum LabMessage : byte
     FileComplete = 13, FileResult = 14, FileRequest = 15,
     CaptureOptions = 16, Wheel = 17, RefreshFrame = 18,
     ClipboardSet = 19, ClipboardGet = 20, ClipboardText = 21, ClipboardDecision = 22,
-    FileManagerRequest = 23, FileManagerReply = 24
+    FileManagerRequest = 23, FileManagerReply = 24,
+    FilePause = 25, FileResume = 26, FileAbort = 27
 }
 internal enum LabRole : byte { ViewOnly = 0, Controller = 1 }
 internal readonly record struct LabPacket(LabMessage Type, byte[] Payload);

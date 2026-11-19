@@ -12,17 +12,20 @@ internal sealed class LabServerRemoteFiles
     private readonly SemaphoreSlim _sendLock;
     private readonly string _viewer;
     private readonly Func<bool> _isController;
-    private readonly LabRemoteFileStore _files = LabRemoteFileStore.ForCurrentUser();
+    private readonly LabRemoteFileStore _files;
+    private readonly LabRemoteFileAccessPolicy _policy;
     private bool _browserApproved;
 
     internal LabServerRemoteFiles(Form owner, SslStream tls, SemaphoreSlim sendLock,
-        string viewer, Func<bool> isController)
+        string viewer, Func<bool> isController,
+        LabRemoteFileStore files, LabRemoteFileAccessPolicy policy)
     {
         _owner = owner; _tls = tls; _sendLock = sendLock;
         _viewer = viewer; _isController = isController;
+        _files = files; _policy = policy;
     }
 
-    internal bool BrowserApproved => _browserApproved && _isController();
+    internal bool BrowserApproved => _browserApproved && _isController() && _policy.Browse;
 
     internal async Task HandleAsync(LabPacket packet, CancellationToken stop)
     {
@@ -30,14 +33,21 @@ internal sealed class LabServerRemoteFiles
             throw new System.Security.Authentication.AuthenticationException(
                 "File manager needs a current Controller on the unlocked desktop.");
         var command = LabRemoteFileWire.DecodeCommand(packet.Payload);
+        if (!_policy.Browse || (command.Action != "List" && !_policy.Changes))
+        {
+            await ReplyAsync(new(command.Id, false, command.Path,
+                Array.Empty<LabRemoteFileItem>(), "Server file access policy denies this operation."), stop);
+            return;
+        }
         bool permitted = _browserApproved;
         if (!permitted)
         {
-            permitted = await ConsentAsync("Open the TJ.RemoteAccess Received folder for " +
-                "this authenticated Viewer?\n\nFiles in other drives/folders remain private.", stop);
-            _browserApproved = permitted && _isController();
+            permitted = await ConsentAsync("Share this Server folder with the authenticated Viewer?\n\n" +
+                _files.Root + "\n\nFiles outside this folder remain private.", stop);
+            _browserApproved = permitted && _isController() && _policy.Browse;
         }
-        if (!permitted || !_isController())
+        if (!permitted || !_isController() || !_policy.Browse ||
+            (command.Action != "List" && !_policy.Changes))
         {
             await ReplyAsync(new(command.Id, false, command.Path,
                 Array.Empty<LabRemoteFileItem>(), "Server user declined file browsing."), stop);
@@ -67,7 +77,8 @@ internal sealed class LabServerRemoteFiles
         try
         {
             result = command.Action == "List" ?
-                _files.List(command.Id, command.Path) : _files.Mutate(command, stop, _isController);
+                _files.List(command.Id, command.Path, command.PageOffset) :
+                _files.Mutate(command, stop, () => _isController() && _policy.Changes);
         }
         catch (InvalidDataException ex) when (ex.Message is
             "Folder contains more than 160 entries; incomplete listing refused." or
@@ -96,7 +107,7 @@ internal sealed class LabServerRemoteFiles
     }
 
     private static string Display(string relative) =>
-        "Received" + (relative.Length == 0 ? "" : "/" + relative);
+        "Shared" + (relative.Length == 0 ? "" : "/" + relative);
 
     private Task ReplyAsync(LabRemoteFileReply result, CancellationToken stop) =>
         LabWire.WriteAsync(_tls, _sendLock, LabMessage.FileManagerReply,

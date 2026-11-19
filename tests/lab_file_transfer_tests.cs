@@ -208,4 +208,85 @@ public sealed class LabFileTransferTests
         }
         finally { Directory.Delete(root, recursive: true); }
     }
+    [Fact]
+    public async Task InterruptedFileResumesAfterReapprovalAndVerifiesSha()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "TJRA-Resume-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            byte[] bytes = RandomNumberGenerator.GetBytes(310_003);
+            string source = Path.Combine(root, "source.bin");
+            string destination = Path.Combine(root, "result.bin");
+            File.WriteAllBytes(source, bytes);
+            var initial = await LabFileTransfer.OfferFromFileAsync(source, CancellationToken.None);
+            using (var receiver = new LabFileReceiver(initial, destination, resumable: true))
+            {
+                receiver.AddChunk(initial.Id, 0, bytes[..40_000]);
+                receiver.AddChunk(initial.Id, 40_000, bytes[40_000..80_000]);
+                Assert.Equal(80_000, receiver.Received);
+            }
+            Assert.Single(Directory.EnumerateFiles(root, ".tjra-resume-*.partial"));
+            var newOffer = initial with { Id = Guid.NewGuid() };
+            using (var receiver = new LabFileReceiver(newOffer, destination, resumable: true))
+            {
+                Assert.Equal(80_000, receiver.Received);
+                var resumeMessage = LabFileTransfer.ResumeDecision(newOffer.Id,
+                    receiver.Received, receiver.ResumePrefixSha256!);
+                var decision = LabFileTransfer.ParseResumeDecision(resumeMessage);
+                Assert.Equal(newOffer.Id, decision.Id);
+                Assert.Equal(80_000, decision.Offset);
+                await LabFileTransfer.SendChunksAsync(source, newOffer,
+                    (type, payload, _) =>
+                    {
+                        if (type == LabMessage.FileChunk)
+                        {
+                            var chunk = LabFileTransfer.ParseChunk(payload.Span);
+                            Assert.True(chunk.Offset >= 80_000);
+                            receiver.AddChunk(chunk.Id, chunk.Offset, chunk.Data);
+                        }
+                        else
+                        {
+                            Assert.Equal(LabMessage.FileComplete, type);
+                            receiver.Finish(LabFileTransfer.ParseTransferId(payload.Span));
+                        }
+                        return Task.CompletedTask;
+                    }, CancellationToken.None, decision.Offset, decision.PrefixSha256);
+            }
+            Assert.Equal(bytes, File.ReadAllBytes(destination));
+            Assert.Empty(Directory.EnumerateFiles(root, ".tjra-resume-*.partial"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    [Fact]
+    public async Task InterruptedTransferRejectsChangedPrefixBeforeSendingMoreBytes()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "TJRA-ResumeBad-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            string source = Path.Combine(root, "source.bin");
+            string destination = Path.Combine(root, "result.bin");
+            byte[] original = RandomNumberGenerator.GetBytes(70_000);
+            File.WriteAllBytes(source, original);
+            var offer = await LabFileTransfer.OfferFromFileAsync(source, CancellationToken.None);
+            using (var receiver = new LabFileReceiver(offer, destination, resumable: true))
+                receiver.AddChunk(offer.Id, 0, original[..32_000]);
+            var retry = offer with { Id = Guid.NewGuid() };
+            using (var receiver = new LabFileReceiver(retry, destination, resumable: true))
+            {
+                original[0] ^= 1;
+                File.WriteAllBytes(source, original);
+                int packets = 0;
+                await Assert.ThrowsAsync<InvalidDataException>(() =>
+                    LabFileTransfer.SendChunksAsync(source, retry,
+                        (_, _, _) => { packets++; return Task.CompletedTask; },
+                        CancellationToken.None, receiver.Received, receiver.ResumePrefixSha256));
+                Assert.Equal(0, packets);
+            }
+            Assert.False(File.Exists(destination));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
 }

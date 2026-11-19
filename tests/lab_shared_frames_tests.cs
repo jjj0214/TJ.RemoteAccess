@@ -20,6 +20,19 @@ public sealed class LabSharedFrameStoreTests
     }
 
     [Fact]
+    public void IdenticalFrameIsNotRepublishedOrBroadcastAgain()
+    {
+        var store = new LabSharedFrameStore();
+        byte[] first = Jpeg(9);
+        Assert.Equal(1, store.Publish(first));
+        var published = store.Latest!;
+        Assert.Equal(1, store.Publish(Jpeg(9)));
+        Assert.Same(published, store.Latest);
+        Assert.Equal(2, store.Publish(Jpeg(10)));
+        Assert.NotSame(published, store.Latest);
+    }
+
+    [Fact]
     public void OldViewerSnapshotRemainsValidWhenNewImageIsPublished()
     {
         var store = new LabSharedFrameStore();

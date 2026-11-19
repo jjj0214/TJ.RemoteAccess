@@ -314,8 +314,8 @@ internal sealed class LabViewerForm : Form
         if (_transferFilesWindow is { IsDisposed: false } existing)
         { existing.BringToFront(); existing.Activate(); return; }
         var window = new LabTransferFilesForm(
-            (action, relative, name, stop) =>
-                _remoteFileClient.ExecuteAsync(action, relative, name, stop),
+            (action, relative, name, offset, stop) =>
+                _remoteFileClient.ExecuteAsync(action, relative, name, stop, offset),
             async (localFile, remoteFolder, stop) =>
             {
                 if (!CanControl || _stop?.IsCancellationRequested != false)
@@ -338,7 +338,8 @@ internal sealed class LabViewerForm : Form
                 { _managerDownloadFolder = null; _managerExpectedFile = null; }
             },
             () => CanControl,
-            () => { _manualDisconnect = true; Disconnect(); });
+            () => { _manualDisconnect = true; Disconnect(); },
+            pause => _transfers.SetPausedAsync(pause));
         _transferFilesWindow = window;
         window.FormClosed += (_, _) => {
             if (ReferenceEquals(_transferFilesWindow, window)) _transferFilesWindow = null;

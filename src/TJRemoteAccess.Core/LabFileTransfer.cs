@@ -8,6 +8,7 @@ using System.Text;
 namespace TJ.RemoteAccess.Lab;
 
 internal sealed record LabFileOffer(Guid Id, string FileName, long Length, byte[] Sha256, string TargetFolder = "");
+internal readonly record struct LabResumeDecision(Guid Id, bool Accepted, long Offset, byte[]? PrefixSha256);
 
 internal static class LabFileTransfer
 {
@@ -112,6 +113,33 @@ internal static class LabFileTransfer
         return (id, data[16] == 1);
     }
 
+    internal static byte[] ResumeDecision(Guid id, long offset, byte[] prefixSha256)
+    {
+        if (offset < 1 || offset > MaxFileBytes || prefixSha256 is not { Length: 32 })
+            throw new InvalidDataException("Invalid transfer resume offset or digest.");
+        var data = new byte[57];
+        Decision(id, true).CopyTo(data, 0);
+        BinaryPrimitives.WriteInt64BigEndian(data.AsSpan(17, 8), offset);
+        prefixSha256.CopyTo(data, 25);
+        return data;
+    }
+
+    internal static LabResumeDecision ParseResumeDecision(ReadOnlySpan<byte> data)
+    {
+        if (data.Length == 17)
+        {
+            var old = ParseDecision(data);
+            return new(old.Id, old.Accepted, 0, null);
+        }
+        if (data.Length != 57 || data[16] != 1)
+            throw new InvalidDataException("Invalid resumed transfer decision.");
+        Guid id = new(data[..16]);
+        long offset = BinaryPrimitives.ReadInt64BigEndian(data.Slice(17, 8));
+        if (id == Guid.Empty || offset < 1 || offset > MaxFileBytes)
+            throw new InvalidDataException("Invalid resume identity or offset.");
+        return new(id, true, offset, data[25..].ToArray());
+    }
+
     internal static byte[] Chunk(Guid id, long offset, ReadOnlySpan<byte> data)
     {
         if (id == Guid.Empty || offset < 0 || data.IsEmpty || data.Length > MaxChunkBytes)
@@ -162,7 +190,7 @@ internal static class LabFileTransfer
 
     internal static async Task SendChunksAsync(string path, LabFileOffer offer,
         Func<LabMessage, ReadOnlyMemory<byte>, CancellationToken, Task> send,
-        CancellationToken stop)
+        CancellationToken stop, long startOffset = 0, byte[]? expectedPrefixSha256 = null)
     {
         Validate(offer);
         if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
@@ -170,10 +198,29 @@ internal static class LabFileTransfer
         await using var input = new FileStream(path, FileMode.Open, FileAccess.Read,
             FileShare.Read, 64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
         if (input.Length != offer.Length) throw new IOException("File changed after offer.");
-        // Send fixed-size chunks and verify the exact bytes sent before completion.
+        // Verify already-received bytes BEFORE skipping them. The sender and
+        // receiver must agree on the SHA-256 of the entire stored prefix.
+        if (startOffset < 0 || startOffset > offer.Length ||
+            (startOffset != 0 && expectedPrefixSha256 is not { Length: 32 }) ||
+            (startOffset == 0 && expectedPrefixSha256 is not null))
+            throw new InvalidDataException("Invalid resume request.");
         using var sentHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        using var prefixHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         var buffer = new byte[MaxChunkBytes];
         long offset = 0;
+        while (offset < startOffset)
+        {
+            int read = await input.ReadAsync(buffer.AsMemory(0,
+                (int)Math.Min(buffer.Length, startOffset - offset)), stop).ConfigureAwait(false);
+            if (read == 0) throw new EndOfStreamException("Source truncated during resume check.");
+            sentHash.AppendData(buffer.AsSpan(0, read));
+            prefixHash.AppendData(buffer.AsSpan(0, read));
+            offset += read;
+        }
+        if (startOffset > 0 &&
+            !CryptographicOperations.FixedTimeEquals(
+                prefixHash.GetHashAndReset(), expectedPrefixSha256!))
+            throw new InvalidDataException("Resume prefix changed; transfer refused.");
         while (offset < offer.Length)
         {
             int read = await input.ReadAsync(buffer.AsMemory(0,
@@ -202,19 +249,25 @@ internal sealed class LabFileReceiver : IDisposable
     private long _received;
     private bool _committed;
     private bool _disposed;
+    private bool _resumable;
+    private bool _invalid;
+    private readonly byte[] _resumePrefixSha256 = Array.Empty<byte>();
 
     internal long Received => _received;
     internal long Total => _offer.Length;
     internal Guid Id => _offer.Id;
+    internal byte[]? ResumePrefixSha256 => _received > 0 && _resumable ?
+        (byte[])_resumePrefixSha256.Clone() : null;
 
     internal static string ServerReceivedDirectory => Path.Combine(
         LabCertificates.ConfigDirectory, "Received");
 
-    internal static LabFileReceiver ForServer(LabFileOffer offer)
+    internal static LabFileReceiver ForServer(LabFileOffer offer, LabRemoteFileStore? store = null)
     {
-        // A Viewer may choose only an existing subfolder inside this user's Received root.
+        // Only a locally configured shared root may be used for Server writes.
         // The Server operator still must approve every incoming file separately.
-        string folder = LabRemoteFileStore.ForCurrentUser().UploadFolder(offer.TargetFolder);
+        string folder = (store ?? LabRemoteFileStore.ForCurrentUser())
+            .UploadFolder(offer.TargetFolder);
         string safe = LabFileTransfer.SafeFileName(offer.FileName);
         // Preserve readable names for the dual-pane manager. Never overwrite an
         // existing file: choose a numbered name, and still atomically commit with
@@ -228,10 +281,10 @@ internal sealed class LabFileReceiver : IDisposable
             if (index > 1000) throw new IOException("Too many files with the same name.");
             target = Path.Combine(folder, stem + " (" + index++ + ")" + suffix);
         }
-        return new LabFileReceiver(offer, target);
+        return new LabFileReceiver(offer, target, resumable: true);
     }
 
-    internal LabFileReceiver(LabFileOffer offer, string destination)
+    internal LabFileReceiver(LabFileOffer offer, string destination, bool resumable = false)
     {
         _offer = LabFileTransfer.Validate(offer);
         if (string.IsNullOrWhiteSpace(destination))
@@ -243,9 +296,62 @@ internal sealed class LabFileReceiver : IDisposable
             (File.GetAttributes(parent) & FileAttributes.ReparsePoint) != 0 ||
             File.Exists(_target) || Directory.Exists(_target))
             throw new InvalidDataException("Destination missing, linked, or already occupied.");
-        _partial = Path.Combine(parent, ".tjra-" + Guid.NewGuid().ToString("N") + ".partial");
-        _file = new FileStream(_partial, FileMode.CreateNew, FileAccess.Write,
-            FileShare.None, 64 * 1024, FileOptions.SequentialScan | FileOptions.WriteThrough);
+        _resumable = resumable;
+        if (resumable)
+        {
+            // A stable, per-destination and per-content identity allows an
+            // authenticated, separately approved reconnect to find its bytes.
+            // The full file hash prevents a different offer from inheriting them.
+            string key = _target.ToUpperInvariant() + "|" + offer.Length + "|" +
+                Convert.ToHexString(offer.Sha256);
+            string digest = Convert.ToHexString(
+                SHA256.HashData(Encoding.UTF8.GetBytes(key)));
+            _partial = Path.Combine(parent, ".tjra-resume-" + digest + ".partial");
+            // Reclaimed after a day; a disconnected transfer never leaves
+            // unlimited, silently persistent staging files.
+            foreach (string stale in Directory.EnumerateFiles(parent,
+                ".tjra-resume-*.partial").Take(100))
+            {
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(stale) < DateTime.UtcNow.AddDays(-1))
+                        File.Delete(stale);
+                }
+                catch (IOException) { } // An active transfer owns its staging file.
+            }
+            if (File.Exists(_partial) &&
+                (File.GetAttributes(_partial) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("Linked transfer partial is forbidden.");
+            _file = new FileStream(_partial, FileMode.OpenOrCreate, FileAccess.ReadWrite,
+                FileShare.None, 64 * 1024, FileOptions.SequentialScan | FileOptions.WriteThrough);
+            try
+            {
+                if (_file.Length > offer.Length)
+                    throw new InvalidDataException("Existing transfer partial is oversized.");
+                using var prefixHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                var buffer = new byte[64 * 1024];
+                int count;
+                while ((count = _file.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    _hash.AppendData(buffer.AsSpan(0, count));
+                    prefixHash.AppendData(buffer.AsSpan(0, count));
+                    _received += count;
+                }
+                _resumePrefixSha256 = prefixHash.GetHashAndReset();
+                _file.Position = _received;
+            }
+            catch
+            {
+                _file.Dispose();
+                throw;
+            }
+        }
+        else
+        {
+            _partial = Path.Combine(parent, ".tjra-" + Guid.NewGuid().ToString("N") + ".partial");
+            _file = new FileStream(_partial, FileMode.CreateNew, FileAccess.Write,
+                FileShare.None, 64 * 1024, FileOptions.SequentialScan | FileOptions.WriteThrough);
+        }
     }
 
     internal void AddChunk(Guid id, long offset, byte[] data)
@@ -261,14 +367,23 @@ internal sealed class LabFileReceiver : IDisposable
 
     internal string Finish(Guid id)
     {
-        if (_disposed || _committed || id != _offer.Id || _received != _offer.Length ||
-            !CryptographicOperations.FixedTimeEquals(_offer.Sha256, _hash.GetHashAndReset()))
-            throw new InvalidDataException("Transfer incomplete or SHA-256 mismatch.");
+        if (_disposed || _committed || id != _offer.Id || _received != _offer.Length)
+            throw new InvalidDataException("Transfer incomplete.");
+        if (!CryptographicOperations.FixedTimeEquals(_offer.Sha256, _hash.GetHashAndReset()))
+        {
+            _invalid = true; // Corrupt partial must never survive for resume.
+            throw new InvalidDataException("Transfer SHA-256 mismatch.");
+        }
         _file.Flush(true);
         _file.Dispose();
         File.Move(_partial, _target, overwrite: false);
         _committed = true;
         return _target;
+    }
+
+    internal void Discard()
+    {
+        _invalid = true;
     }
 
     public void Dispose()
@@ -277,7 +392,7 @@ internal sealed class LabFileReceiver : IDisposable
         _disposed = true;
         _hash.Dispose();
         _file.Dispose();
-        if (!_committed)
+        if (!_committed && (!_resumable || _invalid || _received == 0))
         {
             try { File.Delete(_partial); } catch (IOException) { }
         }

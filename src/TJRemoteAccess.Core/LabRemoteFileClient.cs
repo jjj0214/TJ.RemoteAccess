@@ -14,10 +14,11 @@ internal sealed class LabRemoteFileClient
         _send = send;
 
     internal async Task<LabRemoteFileReply> ExecuteAsync(
-        string action, string path, string newName, CancellationToken stop)
+        string action, string path, string newName, CancellationToken stop,
+        int pageOffset = 0)
     {
         var command = LabRemoteFileWire.CheckCommand(
-            new LabRemoteFileCommand(Guid.NewGuid(), action, path, newName));
+            new LabRemoteFileCommand(Guid.NewGuid(), action, path, newName, pageOffset));
         var source = new TaskCompletionSource<LabRemoteFileReply>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         lock (_gate)

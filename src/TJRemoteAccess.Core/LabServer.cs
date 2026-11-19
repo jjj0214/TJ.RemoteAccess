@@ -641,6 +641,10 @@ internal sealed class LabServerForm : Form
                     LabWire.Welcome(new LabWelcome(role, _desktop.Width, _desktop.Height,
                                                    _desktop.Left, _desktop.Top)), token);
 
+                // The Server owner chooses the share root and permissions locally.
+                // A root change revokes access for existing sessions.
+                var sharePolicy = new LabRemoteFileAccessPolicy(_settings);
+                var shareStore = new LabRemoteFileStore(sharePolicy.Root);
                 // Only the active controller may request an on-device approved file transfer.
                 using var transfers = new LabServerTransferSession(this, tls, writeMutex,
                     tcp.Client.RemoteEndPoint?.ToString() ?? "unknown",
@@ -660,7 +664,7 @@ internal sealed class LabServerForm : Form
                         Log("File download failed: " + failure.Message);
                         try { lifetime.Cancel(); } catch (ObjectDisposedException) { }
                         tcp.Dispose();
-                    });
+                    }, shareStore, sharePolicy);
                 var clipboard = new LabServerClipboardSession(this, tls, writeMutex,
                     tcp.Client.RemoteEndPoint?.ToString() ?? "unknown",
                     () => {
@@ -685,7 +689,7 @@ internal sealed class LabServerForm : Form
 #else
                         return permitted;
 #endif
-                    });
+                    }, shareStore, sharePolicy);
                 transfers.SetRemoteFiles(fileBrowser);
                 var capture = SendFrames(tls, writeMutex, frames, remoteCert, clientPin,
                                          passwordMode, passwordVerifier, role, token);

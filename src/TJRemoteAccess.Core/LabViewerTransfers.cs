@@ -14,10 +14,54 @@ internal sealed class LabViewerTransfers : IDisposable
     private readonly Action<long, long>? _progress;
     private Guid? _uploadId;
     private Guid? _downloadId;
-    private TaskCompletionSource<bool>? _uploadDecision;
+    private TaskCompletionSource<LabResumeDecision>? _uploadDecision;
     private TaskCompletionSource<bool>? _uploadResult;
     private TaskCompletionSource<bool>? _downloadResult;
     private LabFileReceiver? _receive;
+    private TaskCompletionSource<bool> _resumeSignal = CompletedSignal();
+    private bool _paused;
+    private bool _activeBytes;
+
+    private static TaskCompletionSource<bool> CompletedSignal()
+    {
+        var signal = NewSignal();
+        signal.TrySetResult(true);
+        return signal;
+    }
+
+    internal bool Paused { get { lock (_sync) return _paused; } }
+
+    internal async Task SetPausedAsync(bool pause)
+    {
+        Guid? download;
+        lock (_sync)
+        {
+            if (!_activeBytes)
+                throw new InvalidOperationException("Pause is available after Server approval and transfer start.");
+            if (_paused == pause) return;
+            _paused = pause;
+            if (pause) _resumeSignal = NewSignal();
+            else _resumeSignal.TrySetResult(true);
+            download = _downloadId;
+        }
+        // For downloads, the sender must stop producing chunks. Merely
+        // suspending the Viewer read loop would block all desktop frames.
+        if (download.HasValue)
+            await _send(pause ? LabMessage.FilePause : LabMessage.FileResume,
+                LabFileTransfer.TransferId(download.Value));
+    }
+
+    private Task WaitForResumeAsync(CancellationToken stop)
+    {
+        lock (_sync) return _resumeSignal.Task.WaitAsync(stop);
+    }
+
+    private void ResetPause()
+    {
+        _paused = false;
+        _activeBytes = false;
+        _resumeSignal.TrySetResult(true);
+    }
 
     internal LabViewerTransfers(
         Func<LabMessage, ReadOnlyMemory<byte>, Task> send,
@@ -40,7 +84,8 @@ internal sealed class LabViewerTransfers : IDisposable
     {
         LabFileOffer offer = (await LabFileTransfer.OfferFromFileAsync(path, stop)) with
             { TargetFolder = LabRemoteFileWire.CheckRelative(remoteFolder) };
-        TaskCompletionSource<bool> decision = NewSignal();
+        TaskCompletionSource<LabResumeDecision> decision = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         TaskCompletionSource<bool> result = NewSignal();
         lock (_sync)
         {
@@ -50,34 +95,62 @@ internal sealed class LabViewerTransfers : IDisposable
             _uploadDecision = decision;
             _uploadResult = result;
         }
+        bool offered = false;
         try
         {
             _status("Requesting Server approval to send " + offer.FileName + "...");
             await _send(LabMessage.FileOffer, LabFileTransfer.OfferBytes(offer));
-            bool approved = await decision.Task.WaitAsync(TimeSpan.FromMinutes(2), stop);
-            if (!approved)
+            offered = true;
+            var approval = await decision.Task.WaitAsync(TimeSpan.FromMinutes(2), stop);
+            if (!approval.Accepted)
             {
                 _status("Server declined file transfer.");
                 return false;
             }
-            _status("Sending " + offer.FileName + " (up to 4 GiB)...");
-            long sent = 0;
-            _progress?.Invoke(0, offer.Length);
+            if (approval.Offset > offer.Length)
+                throw new InvalidDataException("Server resume offset exceeds file length.");
+            _status(approval.Offset > 0 ? "Resuming " + offer.FileName + " from " +
+                approval.Offset.ToString("N0") + " bytes..." :
+                "Sending " + offer.FileName + " (up to 4 GiB)...");
+            long sent = approval.Offset;
+            lock (_sync) _activeBytes = true;
+            _progress?.Invoke(sent, offer.Length);
             await LabFileTransfer.SendChunksAsync(path, offer,
                 async (type, body, ct) =>
                 {
                     ct.ThrowIfCancellationRequested();
+                    await WaitForResumeAsync(ct);
                     await _send(type, body);
                     if (type == LabMessage.FileChunk)
                     {
                         sent += body.Length - 24; // Payload: 16-byte GUID + 8-byte offset.
                         _progress?.Invoke(sent, offer.Length);
                     }
-                }, stop);
+                }, stop, approval.Offset, approval.PrefixSha256);
             bool verified = await result.Task.WaitAsync(TimeSpan.FromMinutes(2), stop);
             _status(verified ? "Server verified received file: " + offer.FileName :
                 "Server rejected incomplete/corrupted file.");
             return verified;
+        }
+        catch (Exception failure) when (failure is IOException or InvalidDataException or
+            UnauthorizedAccessException or OperationCanceledException or TimeoutException)
+        {
+            // A source error must release the Server's in-flight receiver state
+            // so the next independent file can still be attempted.
+            if (offered)
+            {
+                try
+                {
+                    bool retainValidPart = !stop.IsCancellationRequested &&
+                        failure is not InvalidDataException;
+                    await _send(LabMessage.FileAbort,
+                        LabFileTransfer.Decision(offer.Id, retainValidPart));
+                }
+                catch (Exception sendError) when (sendError is IOException or
+                    InvalidOperationException or OperationCanceledException or
+                    ObjectDisposedException) { }
+            }
+            throw;
         }
         finally
         {
@@ -86,6 +159,7 @@ internal sealed class LabViewerTransfers : IDisposable
                 if (_uploadId == offer.Id)
                 {
                     _uploadId = null; _uploadDecision = null; _uploadResult = null;
+                    ResetPause();
                 }
             }
         }
@@ -107,7 +181,10 @@ internal sealed class LabViewerTransfers : IDisposable
             _status("Requesting on-device Server consent to select a file...");
             await _send(LabMessage.FileRequest, remoteFile.Length == 0 ?
                 LabFileTransfer.TransferId(id) : LabRemoteFileWire.DownloadRequest(id, remoteFile));
-            bool verified = await result.Task.WaitAsync(TimeSpan.FromMinutes(5), stop);
+            // Wall-clock five minutes is insufficient for a 4-GiB transfer
+            // on slow LAN links. Incoming packets keep the session alive;
+            // retain a bounded overall deadline for a genuinely stalled peer.
+            bool verified = await result.Task.WaitAsync(TimeSpan.FromHours(2), stop);
             _status(verified ? "File downloaded and SHA-256 verified." :
                 "Server declined or file was rejected.");
             return verified;
@@ -119,6 +196,7 @@ internal sealed class LabViewerTransfers : IDisposable
                 if (_downloadId == id)
                 {
                     _downloadId = null; _downloadResult = null;
+                    ResetPause();
                     _receive?.Dispose(); _receive = null;
                 }
             }
@@ -131,14 +209,14 @@ internal sealed class LabViewerTransfers : IDisposable
         {
             case LabMessage.FileDecision:
             {
-                var response = LabFileTransfer.ParseDecision(packet.Payload);
-                TaskCompletionSource<bool>? promise;
+                var response = LabFileTransfer.ParseResumeDecision(packet.Payload);
+                TaskCompletionSource<LabResumeDecision>? promise;
                 lock (_sync)
                 {
                     if (_uploadId != response.Id) throw new InvalidDataException("Unsolicited upload approval.");
                     promise = _uploadDecision;
                 }
-                promise?.TrySetResult(response.Accepted);
+                promise?.TrySetResult(response);
                 break;
             }
             case LabMessage.FileResult:
@@ -166,7 +244,7 @@ internal sealed class LabViewerTransfers : IDisposable
                 LabFileReceiver? receiver = null;
                 if (destination is not null)
                 {
-                    try { receiver = new LabFileReceiver(offer, destination); }
+                    try { receiver = new LabFileReceiver(offer, destination, resumable: true); }
                     catch (Exception ex) when (ex is IOException or InvalidDataException or
                         UnauthorizedAccessException) { _status("Unable to save selected file: " + ex.Message); }
                 }
@@ -178,8 +256,12 @@ internal sealed class LabViewerTransfers : IDisposable
                         throw new IOException("Download session was replaced while user selected a path.");
                     }
                     _receive = receiver;
+                    _activeBytes = receiver is not null;
                 }
                 await _send(LabMessage.FileDecision,
+                    receiver is { Received: > 0 } ?
+                    LabFileTransfer.ResumeDecision(offer.Id, receiver.Received,
+                        receiver.ResumePrefixSha256!) :
                     LabFileTransfer.Decision(offer.Id, receiver is not null));
                 if (receiver is null)
                 {
@@ -224,6 +306,14 @@ internal sealed class LabViewerTransfers : IDisposable
         }
     }
 
+    internal void DiscardPendingDownload()
+    {
+        lock (_sync)
+        {
+            _receive?.Discard();
+        }
+    }
+
     internal void Disconnect()
     {
         lock (_sync)
@@ -233,6 +323,7 @@ internal sealed class LabViewerTransfers : IDisposable
             _downloadResult?.TrySetCanceled();
             _uploadDecision = null; _uploadResult = null; _downloadResult = null;
             _uploadId = null; _downloadId = null;
+            ResetPause();
             _receive?.Dispose(); _receive = null;
         }
     }

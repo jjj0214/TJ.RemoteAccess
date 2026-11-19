@@ -13,7 +13,7 @@ class PreviewFeatureSecurityContracts(unittest.TestCase):
         source = (SRC / 'LabServerTransferSession.cs').read_text(encoding='utf-8-sig')
         server = (SRC / 'LabServer.cs').read_text(encoding='utf-8-sig')
         consent = (SRC / 'LabTransferConsent.cs').read_text(encoding='utf-8-sig')
-        for key in ('if (!_authorized())', 'ApproveUploadAsync', 'SelectServerFileAsync',
+        for key in ('if (!_authorized() || !_filePolicy.RootUnchanged)', 'ApproveUploadAsync', 'SelectServerFileAsync',
                     'FileDecision', 'FileRequest', 'FileResult', 'SendChunksAsync'):
             self.assertIn(key, source)
         for key in ('_controller == session', '_sessions.Contains(session)',

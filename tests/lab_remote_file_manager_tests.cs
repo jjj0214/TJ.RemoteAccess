@@ -92,8 +92,17 @@ public sealed class RemoteFileManagerTests
         {
             for (int i = 0; i <= LabRemoteFileWire.MaxEntries; i++)
                 File.WriteAllText(Path.Combine(root, "file-" + i.ToString("D3") + ".txt"), "x");
-            Assert.Throws<InvalidDataException>(() =>
-                new LabRemoteFileStore(root).List(Guid.NewGuid(), ""));
+            var store = new LabRemoteFileStore(root);
+            var first = store.List(Guid.NewGuid(), "");
+            Assert.True(first.HasMore);
+            Assert.Equal(LabRemoteFileWire.MaxEntries + 1, first.TotalCount);
+            Assert.Equal(LabRemoteFileWire.MaxEntries, first.Items.Length);
+            var next = store.List(Guid.NewGuid(), "", first.NextOffset);
+            Assert.False(next.HasMore);
+            Assert.Single(next.Items);
+            Assert.Equal(first.TotalCount, first.Items.Length + next.Items.Length);
+            Assert.DoesNotContain(next.Items[0].Name, first.Items.Select(item => item.Name));
+            Assert.Throws<InvalidDataException>(() => store.List(Guid.NewGuid(), "", first.TotalCount + 1));
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -122,10 +131,13 @@ public sealed class RemoteFileManagerTests
                 File.WriteAllText(Path.Combine(root, "entry-" + i.ToString("D3") + ".txt"), "x");
             var store = new LabRemoteFileStore(root);
             Assert.Equal(LabRemoteFileWire.MaxEntries, store.List(Guid.NewGuid(), "").Items.Length);
-            Assert.Throws<InvalidDataException>(() => store.Mutate(new(
-                Guid.NewGuid(), "CreateFolder", "", "not-created")));
-            Assert.False(Directory.Exists(Path.Combine(root, "not-created")));
-            Assert.Equal(LabRemoteFileWire.MaxEntries, Directory.GetFileSystemEntries(root).Length);
+            store.Mutate(new(Guid.NewGuid(), "CreateFolder", "", "new-folder"));
+            Assert.True(Directory.Exists(Path.Combine(root, "new-folder")));
+            var first = store.List(Guid.NewGuid(), "");
+            Assert.True(first.HasMore);
+            Assert.Equal(LabRemoteFileWire.MaxEntries + 1, first.TotalCount);
+            Assert.Throws<InvalidDataException>(() => LabRemoteFileWire.EncodeCommand(
+                new(Guid.NewGuid(), "Delete", "new-folder", "", 160)));
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -150,6 +162,62 @@ public sealed class RemoteFileManagerTests
             Assert.Throws<InvalidDataException>(() => LabRemoteFileWire.EncodeCommand(
                 new(Guid.NewGuid(), "Copy", "source.txt", "../outside")));
             Assert.False(File.Exists(Path.Combine(Path.GetDirectoryName(root)!, "outside", "source.txt")));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+    [Fact]
+    public void ServerOwnerSharePolicyIsExplicitScopedAndRevocable()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "tjra-share-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var settings = new LabServerSettings {
+                RemoteFileRoot = root,
+                AllowRemoteFileBrowse = true,
+                AllowRemoteFileUpload = true,
+                AllowRemoteFileDownload = false,
+                AllowRemoteFileChanges = false
+            };
+            var policy = new LabRemoteFileAccessPolicy(settings);
+            Assert.Equal(Path.GetFullPath(root), policy.Root);
+            Assert.True(policy.Browse);
+            Assert.True(policy.Upload);
+            Assert.False(policy.Download);
+            Assert.False(policy.Changes);
+            settings.AllowRemoteFileBrowse = false;
+            Assert.False(policy.Browse);
+            settings.RemoteFileRoot = Path.Combine(root, "other");
+            Assert.False(policy.RootUnchanged);
+            Assert.False(policy.Upload);
+            Assert.Throws<InvalidDataException>(() =>
+                LabRemoteFileAccessPolicy.ValidateRoot(Path.GetPathRoot(root)!));
+            Assert.Throws<InvalidDataException>(() =>
+                LabRemoteFileAccessPolicy.ValidateRoot("relative\\folder"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+    [Fact]
+    public void IncompleteStagingIsNeverListedOrAccessibleRemotely()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "tjra-hidden-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            string stageName = ".tjra-resume-0123.partial";
+            string privatePart = Path.Combine(root, stageName);
+            File.WriteAllText(privatePart, "not fully verified");
+            File.WriteAllText(Path.Combine(root, "normal.txt"), "public");
+            var store = new LabRemoteFileStore(root);
+            var entries = store.List(Guid.NewGuid(), "");
+            Assert.Single(entries.Items);
+            Assert.Equal("normal.txt", entries.Items[0].Name);
+            Assert.Throws<InvalidDataException>(() => store.SelectedFile(stageName));
+            Assert.Throws<InvalidDataException>(() => store.Mutate(
+                new(Guid.NewGuid(), "Delete", stageName)));
+            Assert.Throws<InvalidDataException>(() => LabRemoteFileWire.CheckRelative(
+                "child/" + stageName));
+            Assert.True(File.Exists(privatePart));
         }
         finally { Directory.Delete(root, recursive: true); }
     }

@@ -7,7 +7,7 @@ namespace TJ.RemoteAccess.Lab;
 internal static class LabTransferConsent
 {
     internal static async Task<bool> ApproveUploadAsync(Form owner, LabFileOffer offer,
-        string peerDescription, CancellationToken stop)
+        string peerDescription, CancellationToken stop, string? sharedRoot = null)
     {
         var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (owner.IsDisposed || !owner.IsHandleCreated) return false;
@@ -23,7 +23,8 @@ internal static class LabTransferConsent
                         "Server approval is required for every transfer.\n\n" +
                         "Viewer: " + peerDescription + "\n" +
                         "File: " + offer.FileName + "\nSize: " + offer.Length.ToString("N0") +
-                        " bytes\nDestination: current-user TJ.RemoteAccess\\Received" +
+                        " bytes\nDestination: " +
+                        (sharedRoot ?? LabFileReceiver.ServerReceivedDirectory) +
                         (offer.TargetFolder.Length == 0 ? "" : "/" + offer.TargetFolder) +
                         "\n\nApprove?",
                         "TJ.RemoteAccess - Incoming file",

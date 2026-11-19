@@ -8,11 +8,12 @@ namespace TJ.RemoteAccess.Lab;
 
 internal sealed class LabTransferFilesForm : Form
 {
-    private readonly Func<string, string, string, CancellationToken, Task<LabRemoteFileReply>> _remote;
+    private readonly Func<string, string, string, int, CancellationToken, Task<LabRemoteFileReply>> _remote;
     private readonly Func<string, string, CancellationToken, Task> _upload;
     private readonly Func<string, string, CancellationToken, Task> _download;
     private readonly Func<bool> _isController;
     private readonly Action _disconnect;
+    private readonly Func<bool, Task> _setPaused;
     private readonly ListView _localList = MakeList();
     private readonly ListView _remoteList = MakeList();
     private readonly Label _localPath = MakeCaption();
@@ -45,6 +46,8 @@ internal sealed class LabTransferFilesForm : Form
     private readonly Button _copyRemoteButton = MakeButton("Copy");
     private readonly Button _pasteRemoteButton = MakeButton("Paste");
     private readonly Button _cancelButton = MakeButton("Cancel transfer");
+    private readonly Button _pauseButton = MakeButton("Pause");
+    private bool _paused;
     private readonly List<Button> _actions = new();
     private readonly List<Button> _navigation = new();
     private string _localFolder = Directory.Exists(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)) ?
@@ -57,14 +60,16 @@ internal sealed class LabTransferFilesForm : Form
     internal string CurrentLocalFolder => _localFolder;
 
     internal LabTransferFilesForm(
-        Func<string, string, string, CancellationToken, Task<LabRemoteFileReply>> remote,
+        Func<string, string, string, int, CancellationToken, Task<LabRemoteFileReply>> remote,
         Func<string, string, CancellationToken, Task> upload,
         Func<string, string, CancellationToken, Task> download,
         Func<bool> isController,
-        Action disconnect)
+        Action disconnect,
+        Func<bool, Task> setPaused)
     {
         _remote = remote; _upload = upload; _download = download;
         _isController = isController; _disconnect = disconnect;
+        _setPaused = setPaused;
         Text = "TJ.RemoteAccess | Transfer Files";
         AutoScaleMode = AutoScaleMode.Dpi; // Respect high-DPI Windows displays.
         StartPosition = FormStartPosition.CenterParent;
@@ -88,7 +93,7 @@ internal sealed class LabTransferFilesForm : Form
             ForeColor = Color.FromArgb(27, 55, 90), AutoSize = true, Location = new Point(15, 8)
         });
         top.Controls.Add(new Label {
-            Text = "Remote: approved Received folder only  ·  TLS Controller required  ·  Each transfer needs Server approval",
+            Text = "Remote: Server-selected shared folder  ·  Controller required  ·  Individual Server approval",
             ForeColor = Color.FromArgb(94, 107, 124), AutoSize = true, Location = new Point(16, 40)
         });
         layout.Controls.Add(top, 0, 0);
@@ -102,7 +107,7 @@ internal sealed class LabTransferFilesForm : Form
         middle.Controls.Add(BuildPane("내 PC  /  Local computer", _localPath, _localList,
             ("Drives", () => ChooseDrive()), ("Folder...", () => ChooseLocalFolder()),
             ("Up", () => GoLocalUp()), ("Refresh", RefreshLocal)), 0, 0);
-        middle.Controls.Add(BuildPane("원격 PC  /  Remote · Received", _remotePathLabel, _remoteList,
+        middle.Controls.Add(BuildPane("원격 PC  /  Remote · Shared", _remotePathLabel, _remoteList,
             ("Root", () => _ = ExecuteAsync(ct => BrowseRemoteAsync("", ct))),
             ("Up", () => _ = ExecuteAsync(ct => BrowseRemoteAsync(ParentRemote(_remoteFolder), ct))),
             ("Refresh", () => _ = ExecuteAsync(ct => BrowseRemoteAsync(_remoteFolder, ct)))), 2, 0);
@@ -121,25 +126,29 @@ internal sealed class LabTransferFilesForm : Form
         middle.Controls.Add(operations, 1, 0);
         layout.Controls.Add(middle, 0, 1);
 
-        var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3,
+        var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4,
             RowCount = 4, BackColor = Color.White, Padding = new Padding(12, 9, 12, 8) };
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 154));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 144));
-        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 99));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 88));
         footer.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
         footer.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         footer.RowStyles.Add(new RowStyle(SizeType.Absolute, 25));
         footer.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         footer.Controls.Add(_status, 0, 0);
-        footer.SetColumnSpan(_status, 3);
+        footer.SetColumnSpan(_status, 4);
         footer.Controls.Add(_progress, 0, 1);
         _cancelButton.Dock = DockStyle.Fill;
         _cancelButton.Enabled = false;
-        footer.Controls.Add(_cancelButton, 1, 1);
+        footer.Controls.Add(_cancelButton, 2, 1);
+        _pauseButton.Dock = DockStyle.Fill;
+        _pauseButton.Enabled = false;
+        footer.Controls.Add(_pauseButton, 1, 1);
         var close = MakeButton("Close");
         close.Dock = DockStyle.Fill;
         close.Click += (_, _) => Close();
-        footer.Controls.Add(close, 2, 1);
+        footer.Controls.Add(close, 3, 1);
         _history.Columns.Add("Result", 85);
         _history.Columns.Add("Direction", 90);
         _history.Columns.Add("File / folder", 330);
@@ -151,9 +160,9 @@ internal sealed class LabTransferFilesForm : Form
                 _history.Columns[1].Width - _history.Columns[2].Width - 26);
         };
         footer.Controls.Add(_metrics, 0, 2);
-        footer.SetColumnSpan(_metrics, 3);
+        footer.SetColumnSpan(_metrics, 4);
         footer.Controls.Add(_history, 0, 3);
-        footer.SetColumnSpan(_history, 3);
+        footer.SetColumnSpan(_history, 4);
         layout.Controls.Add(footer, 0, 2);
         Controls.Add(layout);
 
@@ -215,8 +224,63 @@ internal sealed class LabTransferFilesForm : Form
                 throw;
             }
         });
+        _pauseButton.Click += async (_, _) =>
+        {
+            if (!_busy) return;
+            try
+            {
+                bool next = !_paused;
+                await _setPaused(next);
+                _paused = next;
+                _pauseButton.Text = _paused ? "Resume" : "Pause";
+                SetStatus(_paused ? "Transfer paused; Viewer remains connected." :
+                    "Transfer resumed.");
+            }
+            catch (Exception ex) when (ex is IOException or InvalidOperationException or
+                OperationCanceledException)
+            {
+                SetStatus("Pause/resume unavailable: " + ex.Message);
+            }
+        };
         _cancelButton.Click += (_, _) => CancelTransfer();
+        var retryMenu = new ContextMenuStrip();
+        retryMenu.Items.Add("Retry selected failed transfer", null, async (_, _) =>
+            await RetrySelectedAsync());
+        _history.ContextMenuStrip = retryMenu;
+        _history.DoubleClick += async (_, _) => await RetrySelectedAsync();
         InstallLocalContextMenu();
+        _localList.ItemDrag += (_, _) =>
+        {
+            if (_busy || !_isController()) return;
+            var files = _localList.SelectedItems.Cast<ListViewItem>()
+                .Select(item => item.Tag as LocalEntry)
+                .Where(item => item is not null)
+                .Select(item => item!.FullPath).ToArray();
+            if (files.Length == 0) return;
+            _localList.DoDragDrop(new DataObject(DataFormats.FileDrop, files),
+                DragDropEffects.Copy);
+        };
+        _remoteList.AllowDrop = true;
+        _remoteList.DragEnter += (_, args) =>
+        {
+            args.Effect = !_busy && _isController() &&
+                args.Data?.GetDataPresent(DataFormats.FileDrop) == true ?
+                DragDropEffects.Copy : DragDropEffects.None;
+        };
+        _remoteList.DragDrop += async (_, args) =>
+        {
+            if (_busy || !_isController() ||
+                args.Data?.GetData(DataFormats.FileDrop) is not string[] dropped ||
+                dropped.Length == 0) return;
+            string[] files = dropped.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (MessageBox.Show(this, "Send " + files.Length +
+                " local files/folders to Server Received/" + _remoteFolder +
+                "? The Server must approve every operation.",
+                "Transfer dropped files", MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question, MessageBoxDefaultButton.Button2)
+                != DialogResult.Yes) return;
+            await ExecuteAsync(ct => UploadPathsAsync(files, ct));
+        };
         _localList.DoubleClick += (_, _) =>
         {
             if (_busy || _localList.SelectedItems.Count == 0) return;
@@ -301,6 +365,8 @@ internal sealed class LabTransferFilesForm : Form
         if (InvokeRequired) { BeginInvoke(new Action(SessionClosed)); return; }
         _operation?.Cancel();
         _copiedRemoteFile = null;
+        _paused = false;
+        _pauseButton.Text = "Pause";
         // The active operation owns _busy and its CancellationTokenSource.
         // Let its finally block clean up; never enable a second transfer early.
         SetStatus("TLS session disconnected. Remote file operations unavailable.");
@@ -382,6 +448,7 @@ internal sealed class LabTransferFilesForm : Form
     }
 
     private sealed record LocalEntry(string FullPath, bool IsDirectory, long Size);
+    private sealed record RetryEntry(bool Upload, string LocalPath, string RemotePath);
 
     private sealed class EntryComparer(int column, bool descending) : System.Collections.IComparer
     {
@@ -414,21 +481,25 @@ internal sealed class LabTransferFilesForm : Form
         _pasteRemoteButton.Enabled = editable && _copiedRemoteFile is not null;
         foreach (Button b in _navigation) b.Enabled = !_busy;
         _cancelButton.Enabled = _busy;
+        _pauseButton.Enabled = _busy && _isController();
     }
 
     private void SetStatus(string text) => _status.Text = text;
 
-    private void RecordOutcome(string direction, string path, bool success, string detail)
+    private void RecordOutcome(string direction, string path, bool success, string detail,
+        RetryEntry? retry = null)
     {
         if (success) _succeeded++;
         else _failed++;
         var row = new ListViewItem(success ? "PASS" : "FAILED") {
-            ForeColor = success ? Color.FromArgb(23, 106, 67) : Color.FromArgb(176, 48, 48)
+            ForeColor = success ? Color.FromArgb(23, 106, 67) : Color.FromArgb(176, 48, 48),
+            Tag = success ? null : retry
         };
         row.SubItems.Add(direction);
         row.SubItems.Add(path);
         row.SubItems.Add(detail);
         _history.Items.Insert(0, row);
+        if (_history.Items.Count > 500) _history.Items.RemoveAt(_history.Items.Count - 1);
         _metrics.Text = "Successful operations: " + _succeeded +
             "   |   Failed / skipped operations: " + _failed;
     }
@@ -447,9 +518,35 @@ internal sealed class LabTransferFilesForm : Form
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or
             InvalidDataException or InvalidOperationException)
         {
-            RecordOutcome(direction, display, false, ex.Message);
+            RecordOutcome(direction, display, false, ex.Message,
+                new RetryEntry(upload, localPath, remotePath));
             // Continue independent files, but stop immediately on disconnect.
             if (stop.IsCancellationRequested || !_isController()) throw;
+        }
+    }
+
+    private async Task RetrySelectedAsync()
+    {
+        if (_busy || !_isController()) return;
+        if (_history.SelectedItems.Count != 1 ||
+            _history.SelectedItems[0].Tag is not RetryEntry failed)
+        {
+            SetStatus("Select a FAILED file entry in the transfer history first.");
+            return;
+        }
+        if (MessageBox.Show(this,
+            "Retry this failed " + (failed.Upload ? "upload" : "download") +
+            " from the beginning? Server approval is required again.\n\n" +
+            (failed.Upload ? failed.LocalPath : failed.RemotePath),
+            "Retry file", MessageBoxButtons.YesNo, MessageBoxIcon.Question,
+            MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+        await ExecuteAsync(ct => TransferOneAsync(
+            failed.Upload, failed.LocalPath, failed.RemotePath, ct));
+        if (_isController())
+        {
+            if (failed.Upload)
+                await ExecuteAsync(ct => BrowseRemoteAsync(_remoteFolder, ct));
+            else RefreshLocal();
         }
     }
 
@@ -566,9 +663,10 @@ internal sealed class LabTransferFilesForm : Form
         try
         {
             _localList.Items.Clear();
-            var visiblePaths = Directory.EnumerateFileSystemEntries(_localFolder).Take(161).ToArray();
-            if (visiblePaths.Length > 160)
-                throw new InvalidDataException("Local folder contains more than 160 entries; showing a partial list is unsafe.");
+            var visiblePaths = Directory.EnumerateFileSystemEntries(_localFolder)
+                .Take(LabRemoteFileWire.MaxFolderEntries + 1).ToArray();
+            if (visiblePaths.Length > LabRemoteFileWire.MaxFolderEntries)
+                throw new InvalidDataException("Local folder has over 10000 entries; select a narrower folder.");
             var entries = visiblePaths
                 .Select(path => new FileInfo(path))
                 .OrderByDescending(info => (info.Attributes & FileAttributes.Directory) != 0)
@@ -603,23 +701,64 @@ internal sealed class LabTransferFilesForm : Form
         string newName, CancellationToken stop)
     {
         if (!_isController()) throw new UnauthorizedAccessException("Controller access required.");
-        var reply = await _remote(action, path, newName, stop);
+        var reply = await _remote(action, path, newName, 0, stop);
         if (!reply.Success)
             throw new InvalidOperationException(reply.Error.Length > 0 ? reply.Error :
                 "Server rejected the remote file operation.");
-        _remoteFolder = reply.Path;
-        DisplayRemote(reply);
-        SetStatus(action == "List" ? "Remote folder loaded: " + reply.Items.Length + " entries." :
-            "Server approved and completed: " + action + ".");
+        await BrowseRemoteAsync(reply.Path, stop);
+        SetStatus("Server approved and completed: " + action + ".");
         return reply;
     }
 
-    private async Task BrowseRemoteAsync(string relative, CancellationToken stop) =>
-        await CommandAsync("List", relative, "", stop);
+    private async Task BrowseRemoteAsync(string relative, CancellationToken stop)
+    {
+        var reply = await ReadAllRemoteAsync(relative, stop);
+        _remoteFolder = reply.Path;
+        DisplayRemote(reply);
+        SetStatus("Remote folder loaded completely: " + reply.Items.Length + " entries.");
+    }
+
+    private async Task<LabRemoteFileReply> ReadAllRemoteAsync(
+        string relative, CancellationToken stop)
+    {
+        var items = new List<LabRemoteFileItem>();
+        var uniqueNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int offset = 0;
+        int? expectedCount = null;
+        LabRemoteFileReply? last = null;
+        do
+        {
+            stop.ThrowIfCancellationRequested();
+            var page = await _remote("List", relative, "", offset, stop);
+            if (!page.Success)
+                throw new InvalidOperationException(page.Error);
+            if (!string.Equals(page.Path, relative, StringComparison.Ordinal))
+                throw new InvalidDataException("Server returned an unrelated remote folder.");
+            if (expectedCount.HasValue && page.TotalCount != expectedCount.Value)
+                throw new InvalidDataException("Remote folder changed during paged listing; refresh.");
+            expectedCount ??= page.TotalCount;
+            foreach (var item in page.Items)
+            {
+                if (!uniqueNames.Add(item.Name))
+                    throw new InvalidDataException("Remote folder changed during paged listing; duplicate.");
+                items.Add(item);
+            }
+            if (items.Count > LabRemoteFileWire.MaxFolderEntries)
+                throw new InvalidDataException("Remote folder exceeds 10000 entries.");
+            if (page.HasMore &&
+                (page.NextOffset != offset + page.Items.Length || page.NextOffset <= offset))
+                throw new InvalidDataException("Invalid remote listing cursor.");
+            offset = page.NextOffset;
+            last = page;
+        } while (last.HasMore);
+        if (expectedCount > 0 && items.Count != expectedCount)
+            throw new InvalidDataException("Remote folder changed during paged listing; refresh.");
+        return last! with { Items = items.ToArray(), NextOffset = 0, HasMore = false };
+    }
 
     private void DisplayRemote(LabRemoteFileReply reply)
     {
-        _remotePathLabel.Text = "Received" + (reply.Path.Length > 0 ? "/" + reply.Path : "");
+        _remotePathLabel.Text = "Shared" + (reply.Path.Length > 0 ? "/" + reply.Path : "");
         _remoteList.BeginUpdate();
         try
         {
@@ -633,8 +772,8 @@ internal sealed class LabTransferFilesForm : Form
                 if (entry.IsDirectory) row.ForeColor = Color.FromArgb(35, 100, 165);
                 _remoteList.Items.Add(row);
             }
-            // A directory exceeding 160 entries is rejected by the Server;
-            // successful lists are complete, never silently truncated.
+            // All available pages are validated before presenting a complete list;
+            // never silently show a truncated remote folder.
         }
         finally { _remoteList.EndUpdate(); }
     }
@@ -675,6 +814,8 @@ internal sealed class LabTransferFilesForm : Form
             _operation.Dispose();
             _operation = null;
             _busy = false;
+            _paused = false;
+            _pauseButton.Text = "Pause";
             _progress.Style = ProgressBarStyle.Continuous;
             RefreshActions();
         }
@@ -716,7 +857,7 @@ internal sealed class LabTransferFilesForm : Form
     {
         stop.ThrowIfCancellationRequested();
         if (depth > 8) throw new InvalidDataException("Remote folder depth exceeds 8.");
-        var listing = await _remote("List", remotePath, "", stop);
+        var listing = await ReadAllRemoteAsync(remotePath, stop);
         if (!listing.Success) throw new InvalidOperationException(listing.Error);
         int count = 1; long total = 0;
         foreach (var item in listing.Items)
@@ -739,14 +880,21 @@ internal sealed class LabTransferFilesForm : Form
         return (count, total);
     }
 
-    private async Task UploadSelectedAsync(CancellationToken stop)
+    private Task UploadSelectedAsync(CancellationToken stop) =>
+        UploadPathsAsync(_localList.SelectedItems.Cast<ListViewItem>()
+            .Select(row => row.Tag as LocalEntry)
+            .Where(entry => entry is not null)
+            .Select(entry => entry!.FullPath).ToArray(), stop);
+
+    private async Task UploadPathsAsync(string[] selected, CancellationToken stop)
     {
-        var selected = _localList.SelectedItems.Cast<ListViewItem>()
-            .Select(row => row.Tag as LocalEntry).Where(entry => entry is not null).ToArray();
-        if (selected.Length == 0) throw new InvalidOperationException("Select local files or folders first.");
+        if (selected.Length == 0)
+            throw new InvalidOperationException("Select local files or folders first.");
+        if (selected.Length > MaxBatchEntries)
+            throw new InvalidDataException("Batch exceeds 128 files/folders.");
         int planned = 0; long totalBytes = 0;
         foreach (var selectedEntry in selected)
-            CheckLocalTree(selectedEntry!.FullPath, 0, stop, ref planned, ref totalBytes);
+            CheckLocalTree(selectedEntry, 0, stop, ref planned, ref totalBytes);
         int sentEntries = 0;
         int beforeSuccess = _succeeded, beforeFailed = _failed;
         string startingRemoteFolder = _remoteFolder;
@@ -754,12 +902,13 @@ internal sealed class LabTransferFilesForm : Form
         foreach (var item in selected)
         {
             stop.ThrowIfCancellationRequested();
-            if (item!.IsDirectory)
-                await UploadFolderAsync(item.FullPath, startingRemoteFolder, 0, stop, () => ++sentEntries);
+            if (Directory.Exists(item))
+                await UploadFolderAsync(item, startingRemoteFolder, 0, stop, () => ++sentEntries);
             else
             {
-                if (++sentEntries > MaxBatchEntries) throw new InvalidDataException("Batch limit: 128 entries.");
-                await TransferOneAsync(true, item.FullPath, startingRemoteFolder, stop);
+                if (++sentEntries > MaxBatchEntries)
+                    throw new InvalidDataException("Batch limit: 128 entries.");
+                await TransferOneAsync(true, item, startingRemoteFolder, stop);
             }
         }
         await BrowseRemoteAsync(startingRemoteFolder, stop);
@@ -828,7 +977,7 @@ internal sealed class LabTransferFilesForm : Form
                     throw new InvalidDataException("Remote file exceeds 4 GiB.");
             }
             if (plannedEntries > MaxBatchEntries || plannedBytes > MaxBatchBytes)
-                throw new InvalidDataException("Batch exceeds 128 entries or 512 MiB.");
+                throw new InvalidDataException("Batch exceeds 128 entries or 8 GiB.");
         }
         SetStatus("Downloading up to " + plannedEntries + " entries (" + FormatSize(plannedBytes) +").");
         int beforeSuccess = _succeeded, beforeFailed = _failed;
@@ -865,7 +1014,7 @@ internal sealed class LabTransferFilesForm : Form
         if (depth > 8) throw new InvalidDataException("Folder depth limited to 8.");
         if (count() > MaxBatchEntries) throw new InvalidDataException("Batch exceeds 128 files/folders.");
         RecordOutcome("Download folder", remotePath, true, "Local destination folder created.");
-        var reply = await _remote("List", remotePath, "", stop);
+        var reply = await ReadAllRemoteAsync(remotePath, stop);
         if (!reply.Success) throw new InvalidOperationException(reply.Error);
         foreach (var entry in reply.Items)
         {
@@ -912,12 +1061,13 @@ internal sealed class LabTransferFilesForm : Form
     {
         if (!_busy) return;
         if (MessageBox.Show(this,
-            "To safely discard an in-progress partial file, the TLS session must close.\n" +
-            "Cancel this operation and disconnect the Viewer?",
+            "Cancel this transfer and disconnect the Viewer?\n" +
+            "An incomplete file can be retained as a hidden partial for up to 24 hours " +
+            "for a verified retry. It never becomes a completed file before SHA-256 succeeds.",
             "Cancel transfer", MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
             MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
         _operation?.Cancel();
-        _disconnect(); // Closed session disposes server-side partial files.
-        SetStatus("Transfer canceled; remote session disconnected for safe cleanup.");
+        _disconnect(); // Incomplete resumable files remain hidden and time-bounded.
+        SetStatus("Transfer canceled; disconnected. Verified-prefix retry remains available.");
     }
 }

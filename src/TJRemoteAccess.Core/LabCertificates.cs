@@ -12,6 +12,13 @@ internal sealed class LabServerSettings
     public int Port { get; set; } = LabCertificates.DefaultPort;
     public string ServerCertificateThumbprint { get; set; } = "";
     public string AllowedClientSha256 { get; set; } = "";
+    // Explicitly chosen by the local Server owner. Empty means the
+    // private current-user TJ.RemoteAccess/Received folder.
+    public string RemoteFileRoot { get; set; } = "";
+    public bool AllowRemoteFileBrowse { get; set; } = true;
+    public bool AllowRemoteFileUpload { get; set; } = true;
+    public bool AllowRemoteFileDownload { get; set; } = true;
+    public bool AllowRemoteFileChanges { get; set; } = true;
 }
 internal sealed class LabViewerSettings
 {

@@ -7,16 +7,25 @@ using System.Text.Json;
 namespace TJ.RemoteAccess.Lab;
 
 internal sealed record LabRemoteFileItem(string Name, bool IsDirectory, long Size, DateTime ModifiedUtc);
-internal sealed record LabRemoteFileCommand(Guid Id, string Action, string Path = "", string NewName = "");
+internal sealed record LabRemoteFileCommand(Guid Id, string Action, string Path = "",
+    string NewName = "", int PageOffset = 0);
 internal sealed record LabRemoteFileReply(Guid Id, bool Success, string Path,
-    LabRemoteFileItem[] Items, string Error = "");
+    LabRemoteFileItem[] Items, string Error = "", int NextOffset = 0,
+    bool HasMore = false, int TotalCount = 0);
 
 internal static class LabRemoteFileWire
 {
     internal const int MaxEntries = 160;
+    internal const int MaxFolderEntries = 10000;
     internal const int MaxBytes = 64 * 1024;
     internal const int MaxRelativePathBytes = 720;
     private static readonly UTF8Encoding Utf8 = new(false, true);
+
+    // Internal, unfinished content is never remotely browsable, downloadable,
+    // renamed, copied or deleted, even by an authenticated Controller.
+    internal static bool IsInternalStage(string name) =>
+        name.StartsWith(".tjra-", StringComparison.OrdinalIgnoreCase) &&
+        name.EndsWith(".partial", StringComparison.OrdinalIgnoreCase);
 
     internal static string CheckRelative(string? path, bool allowEmpty = true)
     {
@@ -33,17 +42,28 @@ internal static class LabRemoteFileWire
         if (parts.Length > 8)
             throw new InvalidDataException("Remote folder depth exceeds limit.");
         foreach (var part in parts)
+        {
             LabFileTransfer.SafeFileName(part);
+            if (IsInternalStage(part))
+                throw new InvalidDataException("Transfer staging files are not shared.");
+        }
         return string.Join("/", parts);
     }
 
     internal static LabRemoteFileCommand CheckCommand(LabRemoteFileCommand command)
     {
-        if (command.Id == Guid.Empty || command.Action is not ("List" or "CreateFolder" or "Rename" or "Delete" or "Copy"))
-            throw new InvalidDataException("Unknown remote file operation.");
+        if (command.Id == Guid.Empty ||
+            command.Action is not ("List" or "CreateFolder" or "Rename" or "Delete" or "Copy") ||
+            command.PageOffset < 0 || command.PageOffset > MaxFolderEntries ||
+            (command.PageOffset != 0 && command.Action != "List"))
+            throw new InvalidDataException("Unknown remote file operation or invalid page.");
         CheckRelative(command.Path, allowEmpty: command.Action is "List" or "CreateFolder");
         if (command.Action is "Rename" or "CreateFolder")
+        {
             LabFileTransfer.SafeFileName(command.NewName);
+            if (IsInternalStage(command.NewName))
+                throw new InvalidDataException("Transfer staging filenames are reserved.");
+        }
         else if (command.Action == "Copy")
             CheckRelative(command.NewName); // Destination folder, not an absolute path.
         else if (!string.IsNullOrEmpty(command.NewName))
@@ -85,7 +105,10 @@ internal static class LabRemoteFileWire
         if (reply.Path is null || reply.Items is null || reply.Error is null ||
             reply.Items.Any(item => item is null || item.Name is null) ||
             reply.Id == Guid.Empty || reply.Items.Length > MaxEntries ||
-            reply.Error.Length > 160)
+            reply.Error.Length > 160 || reply.NextOffset < 0 ||
+            reply.NextOffset > MaxFolderEntries ||
+            reply.TotalCount < 0 || reply.TotalCount > MaxFolderEntries ||
+            (reply.HasMore && (reply.Items.Length == 0 || reply.NextOffset == 0)))
             throw new InvalidDataException("Remote file result too large.");
         CheckRelative(reply.Path);
         foreach (var item in reply.Items)
@@ -122,9 +145,66 @@ internal static class LabRemoteFileWire
     }
 }
 
+internal sealed class LabRemoteFileAccessPolicy
+{
+    private readonly LabServerSettings _settings;
+    internal readonly string Root;
+
+    internal LabRemoteFileAccessPolicy(LabServerSettings settings)
+    {
+        _settings = settings;
+        Root = ValidateRoot(settings.RemoteFileRoot);
+    }
+
+    internal bool RootUnchanged
+    {
+        get
+        {
+            try
+            {
+                return string.Equals(Root, ValidateRoot(_settings.RemoteFileRoot),
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or
+                UnauthorizedAccessException or ArgumentException)
+            {
+                return false; // Invalid or removed share is an immediate revocation.
+            }
+        }
+    }
+    internal bool Browse => RootUnchanged && _settings.AllowRemoteFileBrowse;
+    internal bool Upload => RootUnchanged && _settings.AllowRemoteFileUpload;
+    internal bool Download => RootUnchanged && _settings.AllowRemoteFileDownload;
+    internal bool Changes => Browse && _settings.AllowRemoteFileChanges;
+
+    internal static string ValidateRoot(string? configured)
+    {
+        string input = string.IsNullOrWhiteSpace(configured) ?
+            LabFileReceiver.ServerReceivedDirectory : configured;
+        if (!Path.IsPathFullyQualified(input) || input.StartsWith(@"\\", StringComparison.Ordinal))
+            throw new InvalidDataException("Remote file share must be an absolute local folder.");
+        string full = Path.GetFullPath(input);
+        if (string.Equals(Path.TrimEndingDirectorySeparator(full),
+            Path.TrimEndingDirectorySeparator(Path.GetPathRoot(full) ?? ""),
+            StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Sharing a drive root is forbidden.");
+        if (!string.IsNullOrWhiteSpace(configured) && !Directory.Exists(full))
+            throw new InvalidDataException("Chosen remote file share folder does not exist.");
+        string? current = full;
+        while (current is not null && Directory.Exists(current))
+        {
+            if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("Linked folders cannot be shared remotely.");
+            current = Directory.GetParent(current)?.FullName;
+        }
+        return full;
+    }
+}
+
 internal sealed class LabRemoteFileStore
 {
     private readonly string _root;
+    internal string Root => _root;
     internal LabRemoteFileStore(string root)
     {
         _root = Path.GetFullPath(root);
@@ -185,16 +265,20 @@ internal sealed class LabRemoteFileStore
         return path;
     }
 
-    internal LabRemoteFileReply List(Guid id, string relative)
+    internal LabRemoteFileReply List(Guid id, string relative, int pageOffset = 0)
     {
         string folder = Resolve(LabRemoteFileWire.CheckRelative(relative));
         if (!Directory.Exists(folder)) throw new InvalidDataException("Remote folder missing.");
+        if (pageOffset < 0 || pageOffset > LabRemoteFileWire.MaxFolderEntries)
+            throw new InvalidDataException("Invalid remote page offset.");
         var list = new List<LabRemoteFileItem>();
-        foreach (string path in Directory.EnumerateFileSystemEntries(folder).Take(LabRemoteFileWire.MaxEntries + 1))
+        foreach (string path in Directory.EnumerateFileSystemEntries(folder)
+            .Take(LabRemoteFileWire.MaxFolderEntries + 1))
         {
-            if (list.Count >= LabRemoteFileWire.MaxEntries)
-                throw new InvalidDataException("Folder contains more than 160 entries; incomplete listing refused.");
+            if (list.Count >= LabRemoteFileWire.MaxFolderEntries)
+                throw new InvalidDataException("Remote folder has more than 10000 entries.");
             var info = new FileInfo(path);
+            if (LabRemoteFileWire.IsInternalStage(info.Name)) continue;
             if ((info.Attributes & FileAttributes.ReparsePoint) != 0)
                 throw new InvalidDataException("Folder contains a linked entry; listing refused.");
             LabFileTransfer.SafeFileName(info.Name);
@@ -204,7 +288,13 @@ internal sealed class LabRemoteFileStore
         }
         var entries = list.OrderByDescending(f => f.IsDirectory).ThenBy(f => f.Name,
             StringComparer.OrdinalIgnoreCase).ToArray();
-        return new LabRemoteFileReply(id, true, relative, entries);
+        if (pageOffset > entries.Length)
+            throw new InvalidDataException("Remote page offset exceeds folder entries.");
+        var page = entries.Skip(pageOffset).Take(LabRemoteFileWire.MaxEntries).ToArray();
+        int nextOffset = pageOffset + page.Length;
+        bool hasMore = nextOffset < entries.Length;
+        return new LabRemoteFileReply(id, true, relative, page, "",
+            hasMore ? nextOffset : 0, hasMore, entries.Length);
     }
 
     internal LabRemoteFileReply Mutate(LabRemoteFileCommand command,
@@ -220,7 +310,7 @@ internal sealed class LabRemoteFileStore
         {
             case "CreateFolder":
                 if (!Directory.Exists(path)) throw new InvalidDataException("Parent folder missing.");
-                if (List(command.Id, command.Path).Items.Length >= LabRemoteFileWire.MaxEntries)
+                if (List(command.Id, command.Path).TotalCount >= LabRemoteFileWire.MaxFolderEntries)
                     throw new InvalidDataException("Remote folder is full (160 entries); create denied.");
                 string child = Resolve(command.Path.Length == 0 ? command.NewName :
                     command.Path + "/" + command.NewName, allowMissingLast: true);
@@ -236,7 +326,7 @@ internal sealed class LabRemoteFileStore
                 string copyFolder = Resolve(command.NewName);
                 if (!Directory.Exists(copyFolder))
                     throw new InvalidDataException("Copy destination folder is missing.");
-                if (List(command.Id, command.NewName).Items.Length >= LabRemoteFileWire.MaxEntries)
+                if (List(command.Id, command.NewName).TotalCount >= LabRemoteFileWire.MaxFolderEntries)
                     throw new InvalidDataException("Copy destination folder is full.");
                 string sourceName = Path.GetFileName(path);
                 string stem = Path.GetFileNameWithoutExtension(sourceName);

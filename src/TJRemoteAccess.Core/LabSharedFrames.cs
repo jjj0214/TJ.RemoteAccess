@@ -30,6 +30,12 @@ internal sealed class LabSharedFrameStore
             jpeg.Length >= LabWire.MaxFrameBytes ||
             jpeg[0] != 0xff || jpeg[1] != 0xd8)
             throw new InvalidDataException("Invalid shared JPEG frame.");
+        // One capture producer: identical JPEG bytes imply identical rendered
+        // pixels, so don't make three Viewers re-download and decode them.
+        // Manual Refresh still explicitly resends Latest when requested.
+        var prior = Volatile.Read(ref _latest);
+        if (prior is not null && jpeg.AsSpan().SequenceEqual(prior.Jpeg))
+            return prior.Sequence;
         var sequence = Interlocked.Increment(ref _sequence);
         Volatile.Write(ref _latest, new LabSharedFrame(sequence, jpeg));
         return sequence;
